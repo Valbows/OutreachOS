@@ -5,6 +5,8 @@
  * for local development (e.g., direct pipe from IDE/CLI).
  */
 
+export {};
+
 async function main() {
   console.error("[MCP Server] Starting STDIO transport...");
   // TODO: Implement MCP server with STDIO transport in Phase 6

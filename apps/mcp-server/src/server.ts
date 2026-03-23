@@ -5,6 +5,8 @@
  * for remote client connections (e.g., Claude Desktop, Cursor, etc.)
  */
 
+export {};
+
 const PORT = parseInt(process.env.MCP_PORT || "3001", 10);
 
 async function main() {
