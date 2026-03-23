@@ -1,0 +1,43 @@
+@import "tailwindcss";
+@import "../styles/design-tokens.css";
+
+body {
+  background: var(--color-background);
+  color: var(--color-on-surface);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Ambient glow shadow utility — use instead of standard drop shadows */
+.shadow-ambient {
+  box-shadow:
+    0 8px 30px rgba(0, 0, 0, 0.4),
+    0 4px 60px rgba(196, 192, 255, 0.04);
+}
+
+/* Ghost border — outline-variant at 15% opacity for accessibility */
+.border-ghost {
+  border: 1px solid rgba(70, 69, 85, 0.15);
+}
+
+/* Primary gradient for CTAs */
+.bg-gradient-primary {
+  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-container) 100%);
+}
+
+/* Glassmorphism for AI components */
+.glass {
+  background: rgba(53, 52, 58, 0.4);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+/* Intelligence Trace — teal pulse for AI activity */
+@keyframes intelligence-pulse {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50% { opacity: 0.8; transform: scale(1.05); }
+}
+.intelligence-trace {
+  animation: intelligence-pulse 2s ease-in-out infinite;
+}

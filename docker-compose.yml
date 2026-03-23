@@ -1,0 +1,71 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: outreachos-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: outreachos
+      POSTGRES_PASSWORD: outreachos_dev
+      POSTGRES_DB: outreachos
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U outreachos"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      target: dev
+    container_name: outreachos-web
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./apps/web:/app/apps/web
+      - ./packages:/app/packages
+      - /app/node_modules
+      - /app/apps/web/node_modules
+      - /app/apps/web/.next
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://outreachos:outreachos_dev@postgres:5432/outreachos
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  mcp-server:
+    build:
+      context: .
+      dockerfile: apps/mcp-server/Dockerfile
+      target: dev
+    container_name: outreachos-mcp
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./apps/mcp-server:/app/apps/mcp-server
+      - ./packages:/app/packages
+      - /app/node_modules
+      - /app/apps/mcp-server/node_modules
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://outreachos:outreachos_dev@postgres:5432/outreachos
+      - MCP_PORT=3001
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

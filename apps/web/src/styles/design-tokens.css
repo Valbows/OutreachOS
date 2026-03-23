@@ -1,0 +1,81 @@
+/*
+ * OutreachOS Design System — "The Luminous Intelligence"
+ * Extracted from Stitch Project 13517806960470855745
+ *
+ * RULES:
+ * - No 1px solid borders for layout. Use background color shifts + negative space.
+ * - No pure black (#000000). Use the navy substrate.
+ * - No standard drop shadows. Use ambient glows with tinted primary.
+ * - Ghost Border: outline-variant at 15% opacity only for accessibility.
+ * - Primary text: on-surface (#E4E1E9), secondary: on-surface-variant (#C7C4D8).
+ */
+
+@theme {
+  /* === Substrate (Neutrals) === */
+  --color-background: #131318;
+  --color-surface: #131318;
+  --color-surface-dim: #131318;
+  --color-surface-bright: #39383e;
+  --color-surface-container: #1f1f25;
+  --color-surface-container-high: #2a292f;
+  --color-surface-container-highest: #35343a;
+  --color-surface-container-low: #1b1b20;
+  --color-surface-container-lowest: #0e0e13;
+  --color-surface-variant: #35343a;
+  --color-surface-tint: #c4c0ff;
+
+  /* === Kinetic Accents === */
+  --color-primary: #c4c0ff;
+  --color-primary-container: #8781ff;
+  --color-primary-fixed: #e3dfff;
+  --color-primary-fixed-dim: #c4c0ff;
+  --color-on-primary: #2000a4;
+  --color-on-primary-container: #1b0091;
+  --color-on-primary-fixed: #100069;
+  --color-on-primary-fixed-variant: #3622ca;
+  --color-inverse-primary: #4f44e2;
+
+  --color-secondary: #41eec2;
+  --color-secondary-container: #00d1a7;
+  --color-secondary-fixed: #55fcd0;
+  --color-secondary-fixed-dim: #28dfb5;
+  --color-on-secondary: #00382b;
+  --color-on-secondary-container: #005441;
+  --color-on-secondary-fixed: #002118;
+  --color-on-secondary-fixed-variant: #00513f;
+
+  --color-tertiary: #ffb785;
+  --color-tertiary-container: #db761f;
+  --color-tertiary-fixed: #ffdcc6;
+  --color-tertiary-fixed-dim: #ffb785;
+  --color-on-tertiary: #502500;
+  --color-on-tertiary-container: #461f00;
+  --color-on-tertiary-fixed: #301400;
+  --color-on-tertiary-fixed-variant: #713700;
+
+  /* === Semantic === */
+  --color-error: #ffb4ab;
+  --color-error-container: #93000a;
+  --color-on-error: #690005;
+  --color-on-error-container: #ffdad6;
+
+  /* === Text / Surface === */
+  --color-on-background: #e4e1e9;
+  --color-on-surface: #e4e1e9;
+  --color-on-surface-variant: #c7c4d8;
+  --color-inverse-on-surface: #303036;
+  --color-inverse-surface: #e4e1e9;
+  --color-outline: #918fa1;
+  --color-outline-variant: #464555;
+
+  /* === Border Radius === */
+  --radius-card: 10px;
+  --radius-button: 8px;
+  --radius-input: 8px;
+  --radius-modal: 16px;
+  --radius-chip: 20px;
+
+  /* === Font Families === */
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
