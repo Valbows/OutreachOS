@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function DashboardLayout({
   children,
 }: {
@@ -13,13 +15,13 @@ export default function DashboardLayout({
           </span>
         </div>
         <nav className="flex-1 px-4 py-4 space-y-1">
-          <NavItem href="/(dashboard)" label="Dashboard" />
-          <NavItem href="/(dashboard)/contacts" label="Contacts" />
-          <NavItem href="/(dashboard)/campaigns" label="Campaigns" />
-          <NavItem href="/(dashboard)/templates" label="Templates" />
-          <NavItem href="/(dashboard)/forms" label="Forms" />
-          <NavItem href="/(dashboard)/analytics" label="Analytics" />
-          <NavItem href="/(dashboard)/settings" label="Settings" />
+          <NavItem href="/" label="Dashboard" />
+          <NavItem href="/contacts" label="Contacts" />
+          <NavItem href="/campaigns" label="Campaigns" />
+          <NavItem href="/templates" label="Templates" />
+          <NavItem href="/forms" label="Forms" />
+          <NavItem href="/analytics" label="Analytics" />
+          <NavItem href="/settings" label="Settings" />
         </nav>
       </aside>
 
@@ -33,11 +35,11 @@ export default function DashboardLayout({
 
 function NavItem({ href, label }: { href: string; label: string }) {
   return (
-    <a
+    <Link
       href={href}
       className="flex items-center gap-3 px-3 py-2 text-sm text-on-surface-variant rounded-[var(--radius-button)] hover:bg-surface-container hover:text-on-surface transition-colors"
     >
       {label}
-    </a>
+    </Link>
   );
 }

@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, timestamp, boolean, integer, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, timestamp, boolean, integer, jsonb, unique } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { accounts } from "./accounts.js";
 
@@ -33,12 +33,18 @@ export const contactGroups = pgTable("contact_groups", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
-export const contactGroupMembers = pgTable("contact_group_members", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  contactId: uuid("contact_id").notNull().references(() => contacts.id, { onDelete: "cascade" }),
-  groupId: uuid("group_id").notNull().references(() => contactGroups.id, { onDelete: "cascade" }),
-  addedAt: timestamp("added_at", { withTimezone: true }).defaultNow().notNull(),
-});
+export const contactGroupMembers = pgTable(
+  "contact_group_members",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    contactId: uuid("contact_id").notNull().references(() => contacts.id, { onDelete: "cascade" }),
+    groupId: uuid("group_id").notNull().references(() => contactGroups.id, { onDelete: "cascade" }),
+    addedAt: timestamp("added_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    unique().on(table.contactId, table.groupId),
+  ]
+);
 
 export const contactsRelations = relations(contacts, ({ one, many }) => ({
   account: one(accounts, { fields: [contacts.accountId], references: [accounts.id] }),
