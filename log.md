@@ -155,3 +155,144 @@
 - `pnpm lint` — **passes**.
 - `pnpm type-check` — **passes**.
 - `pnpm test:unit` — **passes** (23 tests across 4 packages).
+
+## Phase 2 — Authentication & Access Control
+
+### Date: 2026-03-24
+
+### Decisions Made
+
+1. **Auth Provider: Neon Auth (`@neondatabase/auth@0.2.0-beta.1`)** — Built on Better Auth. Single `createNeonAuth` instance provides `.handler()`, `.middleware()`, `.getSession()`, and sign-in/sign-up methods. Chosen for native Neon DB integration and zero-config session management.
+
+2. **Auth Architecture: Server/Client Split** — `lib/auth/server.ts` creates the Neon Auth instance (server-only, uses `next/headers`). `lib/auth/client.ts` creates a browser-side `authClient` for OAuth social sign-in flows. Barrel re-export in `lib/auth/index.ts`.
+
+3. **API Route: Catch-all handler** — `app/api/auth/[...path]/route.ts` proxies all auth API requests through `auth.handler()`. Exports `GET` and `POST`.
+
+4. **Middleware: Route Protection** — `middleware.ts` at `apps/web` root uses `auth.middleware()` with `loginUrl: "/login"`. Protects all dashboard routes: `/contacts`, `/campaigns`, `/templates`, `/forms`, `/analytics`, `/settings`, `/developer`.
+
+5. **Server Actions: Form-based Auth** — `signInWithEmail` and `signUpWithEmail` as `"use server"` actions in route-local `actions.ts` files. Use `useActionState` (React 19) for pending/error state management. Redirect to `/` on success.
+
+6. **OAuth Providers: Google + GitHub** — Social sign-in via `authClient.signIn.social()`. Provider buttons on both login and signup pages. Requires `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` env vars (already in `.env.example`).
+
+7. **Stitch Screen Conversions (3 of 3 complete):**
+   - **Login/Signup (#1)** — Split-screen layout. Left: branding panel with gradient hero. Right: form panel. OAuth buttons, email/password form, error display, pending state, cross-linking.
+   - **Dashboard Overview (#2)** — Sidebar (collapsible via Zustand `sidebarOpen`), TopBar with hamburger toggle, 4-stat grid, Active Campaigns list, Inbox Health metrics, Recent Activity feed, Experiment Progress bar.
+   - **Account Settings (#12)** — Tabbed layout (Profile, Inbox Connection, Notifications, Danger Zone). Profile: avatar upload, name/email/company, password change. Inbox: IMAP/SMTP config, Google OAuth sync, LLM provider select, sender domain, BYOK key management (Hunter.io, Resend, Gemini, OpenRouter). Notifications: toggle rows. Danger: data export, account deletion.
+
+8. **Dashboard Shell Components:**
+   - `components/layouts/sidebar.tsx` — Client component. 8 main nav items with Material-style SVG icons, active state highlighting via `usePathname()`, collapsible width (64→256px), bottom nav with Settings + Log out.
+   - `components/layouts/top-bar.tsx` — Client component. Hamburger button toggles sidebar via Zustand store.
+   - Barrel export: `components/layouts/index.ts`.
+
+9. **Badge Component Extended** — Added `"secondary"` variant (`bg-surface-container-highest text-on-surface-variant`) for campaign status badges and neutral tags.
+
+### Test Suites Added (Phase 2)
+- `src/lib/auth/auth.test.ts` — 4 tests: server instance creation with env vars, auth exports, client creation, barrel re-export.
+- `src/app/(auth)/login/login.test.tsx` — 3 tests: full form rendering, error state, pending state.
+- `src/app/(auth)/signup/signup.test.tsx` — 3 tests: full form rendering, error state, pending state.
+- `src/app/(dashboard)/dashboard.test.tsx` — 6 tests: greeting, stats, campaigns, inbox health, activity, experiment.
+- `src/app/(dashboard)/settings/settings.test.tsx` — 6 tests: heading, tab buttons, profile default, inbox tab, notifications tab, danger zone tab.
+- `src/components/layouts/sidebar.test.tsx` — 3 tests: nav items, active highlighting, logout click.
+- `src/app/app.test.tsx` — Updated with auth mocks and new assertions for Phase 2 page content.
+
+### Final Validation
+- `pnpm type-check` — **passes**.
+- `pnpm vitest run` — **passes** (43 tests across 11 files, 0 failures).
+
+### Open Questions
+- Neon Auth is in beta (`0.2.0-beta.1`) — peer dependency warnings for `@better-auth/passkey` version mismatch (expects 1.5.6, got 1.4.6). Non-blocking.
+- IMAP/SMTP settings, BYOK key management, and LLM preference are UI-only scaffolds — backend integration deferred to Phase 3+ server actions.
+- OAuth provider configuration (Google/GitHub) requires Neon Console setup and env var population before live testing.
+
+## Phase 2 Accessibility Enhancements — 2026-03-24
+
+### Date: 2026-03-24
+
+### Scope
+Comprehensive accessibility audit and fixes across all Phase 2 UI components to ensure WCAG 2.1 AA compliance and robust screen reader support.
+
+### Changes Implemented
+
+1. **Switch Component Accessibility (`components/ui/switch.tsx`)**
+   - Added `role="switch"` to input element for proper assistive tech semantics
+   - Added `aria-checked={checked}` to mirror checked state for screen readers
+   - Moved `className` prop from track `<div>` to root `<label>` for consistent consumer styling
+   - Added regression tests in `ui.test.tsx` for switch semantics and className behavior
+
+2. **Select Component Label Association (`components/ui/select.tsx`)**
+   - Implemented `useId()` for stable generated IDs
+   - Wired `htmlFor` on label and `id` on select for programmatic association
+   - Support for explicit `id` prop override
+   - Added regression test for both generated and explicit ID scenarios
+
+3. **Sidebar Navigation Enhancements (`components/layouts/sidebar.tsx`)**
+   - Added `aria-label="Main navigation"` to sidebar `<aside>` element
+   - Added `aria-hidden="true"` to all decorative navigation SVG icons
+   - Added `data-active` attribute to nav links for stable test assertions
+   - Improved logo accessibility: `sr-only` text "OutreachOS" when collapsed, decorative "O" with `aria-hidden="true"`
+   - Added `aria-label` to collapsed nav links for screen reader context
+   - Implemented sign-out error handling with inline `role="alert"` message
+   - Added collapsed-mode loading feedback: spinner icon + `aria-busy` + accessible name during sign-out
+   - Ensured consistent icon sizing via parent wrapper classes
+
+4. **Dashboard Page Improvements (`app/(dashboard)/page.tsx`)**
+   - Added `"use client"` directive for `useSession()` hook compatibility
+   - Implemented time-aware greeting helper (`getGreeting()`) based on hour of day
+   - Made dashboard greeting dynamic using `authClient.useSession()` for personalized user name
+
+5. **Auth Pages Enhancements**
+   - **Login/Signup OAuth Flow (`app/(auth)/login/page.tsx`, `app/(auth)/signup/page.tsx`)**
+     - Wrapped OAuth sign-in calls with async handlers for proper loading/error states
+     - Added `role="alert"` to OAuth error messages
+     - Implemented cross-blocking: OAuth pending disables email submit, email pending disables OAuth buttons
+     - Fixed OAuth pending state: only clears on failure (not on successful redirect) to prevent UI flicker
+     - Added `finally` block for reliable pending state cleanup on errors
+   - **Server Actions (`app/(auth)/login/actions.ts`, `app/(auth)/signup/actions.ts`)**
+     - Sanitized error logging to avoid logging full error objects or PII
+     - Secured error messages with generic user-facing text
+     - Null-safe form data extraction
+
+6. **Settings Page Accessibility (`app/(dashboard)/settings/page.tsx`)**
+   - Replaced native checkbox inputs with custom `Switch` component for consistent UI
+   - Replaced native `<select>` with custom `Select` component for design system compliance
+   - Added `aria-hidden="true"` to all decorative SVG icons (ProfileIcon, InboxIcon, NotificationsIcon, DangerIcon, GoogleIcon)
+
+7. **Test Infrastructure Improvements**
+   - Added `vi.resetModules()` to signup test `beforeEach` for consistent module isolation
+   - Improved test isolation with `vi.clearAllMocks()` and environment cleanup in auth tests
+   - Made dashboard greeting test deterministic using `vi.useFakeTimers()` and `vi.setSystemTime()`
+   - Updated app integration test to accept flexible time-aware greetings
+   - Added Zustand store reset in sidebar tests for clean state between runs
+   - Extended signup tests to verify cross-blocking between OAuth and email auth pending states
+   - Added regression tests for collapsed sidebar sign-out loading feedback
+
+### Test Results
+- **Total Tests:** 67 tests across 14 test files
+- **Pass Rate:** 100% (67/67 passing)
+- **Coverage:** 89.4% overall (exceeds 80% threshold)
+  - Statements: 89.4%
+  - Branches: 88.39%
+  - Functions: 80.26%
+  - Lines: 89.4%
+- **Test Files:**
+  - `@outreachos/web`: 54 tests (11 files)
+  - `@outreachos/db`: 9 tests (1 file)
+  - `@outreachos/services`: 1 test (1 file)
+  - `@outreachos/mcp-server`: 3 tests (1 file)
+
+### Bugs Fixed
+1. **OAuth Pending State Flicker** — Removed `finally` block that cleared pending state too eagerly on successful OAuth redirects
+2. **Missing Client Directive** — Added `"use client"` to dashboard page for `useSession()` hook
+3. **Hardcoded Greeting** — Replaced static "Good morning" with dynamic time-aware greeting
+4. **Sign-Out Error Swallowing** — Added user-visible error feedback in sidebar when sign-out fails
+5. **Missing ARIA Semantics** — Added switch role, aria-checked, aria-label, aria-hidden across all interactive and decorative elements
+6. **Inconsistent Icon Sizing** — Standardized icon sizing via parent wrapper classes instead of hardcoded SVG dimensions
+7. **Switch className Target** — Fixed Switch component to apply className to root label instead of internal track div
+
+### Validation
+- `pnpm type-check` — **passes**
+- `pnpm vitest run` — **passes** (67/67 tests, 0 failures)
+- `pnpm vitest run --coverage` — **passes** (89.4% coverage, exceeds all thresholds)
+
+### Open Questions
+- None. All accessibility findings addressed and validated.

@@ -8,12 +8,80 @@ vi.mock("next/font/google", () => ({
 
 vi.mock("next/navigation", () => ({
   redirect: vi.fn(),
+  usePathname: vi.fn(() => "/"),
+  useRouter: vi.fn(() => ({ push: vi.fn() })),
+}));
+
+vi.mock("next/link", () => ({
+  default: ({ href, children, ...props }: { href: string; children: React.ReactNode; [key: string]: unknown }) => (
+    <a href={href} {...props}>{children}</a>
+  ),
 }));
 
 vi.mock("@/lib/query-provider", () => ({
   QueryProvider: ({ children }: { children: React.ReactNode }) => (
     <div data-testid="query-provider">{children}</div>
   ),
+}));
+
+vi.mock("@neondatabase/auth/next/server", () => ({
+  createNeonAuth: vi.fn(() => ({
+    handler: vi.fn(() => ({ GET: vi.fn(), POST: vi.fn() })),
+    middleware: vi.fn(),
+    signIn: { email: vi.fn() },
+    signUp: { email: vi.fn() },
+    getSession: vi.fn(),
+  })),
+}));
+
+vi.mock("@neondatabase/auth/next", () => ({
+  createAuthClient: vi.fn(() => ({
+    signIn: { social: vi.fn(), email: vi.fn() },
+    signOut: vi.fn(),
+  })),
+}));
+
+vi.mock("@/lib/auth/client", () => ({
+  authClient: {
+    useSession: vi.fn(() => ({
+      data: {
+        user: { id: "u1", name: "Test User", email: "test@example.com", image: null },
+        session: { id: "s1" },
+      },
+      isPending: false,
+      error: null,
+    })),
+    updateUser: vi.fn(async () => ({ error: null })),
+    changePassword: vi.fn(async () => ({ error: null })),
+    signIn: { social: vi.fn() },
+    signOut: vi.fn(),
+  },
+}));
+
+vi.mock("@/lib/auth/server", () => ({
+  auth: {
+    handler: vi.fn(() => ({ GET: vi.fn(), POST: vi.fn() })),
+    middleware: vi.fn(),
+    signIn: { email: vi.fn() },
+    signUp: { email: vi.fn() },
+    getSession: vi.fn(),
+  },
+}));
+
+vi.mock("react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react")>();
+  return {
+    ...actual,
+    useActionState: vi.fn(() => [null, vi.fn(), false]),
+  };
+});
+
+vi.mock("./(auth)/login/actions", () => ({
+  signInWithEmail: vi.fn(),
+}));
+
+vi.mock("./(auth)/signup/actions", () => ({
+  signUpWithEmail: vi.fn(),
 }));
 
 import AuthLayout from "./(auth)/layout";
@@ -64,17 +132,18 @@ describe("app routes and layouts", () => {
       </AuthLayout>,
     );
     expect(screen.getByText("Auth child")).toBeInTheDocument();
+    expect(screen.getByText("Intelligent outreach.")).toBeInTheDocument();
 
     rerender(<LoginPage />);
     expect(screen.getByText("Welcome back")).toBeInTheDocument();
-    expect(screen.getByText("Sign in to your OutreachOS account")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /sign in$/i })).toBeInTheDocument();
 
     rerender(<SignupPage />);
     expect(screen.getByText("Create your account")).toBeInTheDocument();
-    expect(screen.getByText("Get started with OutreachOS")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /create account$/i })).toBeInTheDocument();
   });
 
-  it("renders the dashboard layout with navigation links", () => {
+  it("renders the dashboard layout with sidebar navigation links", () => {
     render(
       <DashboardLayout>
         <span>Dashboard child</span>
@@ -83,45 +152,21 @@ describe("app routes and layouts", () => {
 
     expect(screen.getByText("OutreachOS")).toBeInTheDocument();
     expect(screen.getByText("Dashboard child")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute(
-      "href",
-      "/",
-    );
-    expect(screen.getByRole("link", { name: "Contacts" })).toHaveAttribute(
-      "href",
-      "/contacts",
-    );
-    expect(screen.getByRole("link", { name: "Campaigns" })).toHaveAttribute(
-      "href",
-      "/campaigns",
-    );
-    expect(screen.getByRole("link", { name: "Templates" })).toHaveAttribute(
-      "href",
-      "/templates",
-    );
-    expect(screen.getByRole("link", { name: "Forms" })).toHaveAttribute(
-      "href",
-      "/forms",
-    );
-    expect(screen.getByRole("link", { name: "Analytics" })).toHaveAttribute(
-      "href",
-      "/analytics",
-    );
-    expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute(
-      "href",
-      "/settings",
-    );
+    expect(screen.getByRole("link", { name: /dashboard/i })).toHaveAttribute("href", "/");
+    expect(screen.getByRole("link", { name: /contacts/i })).toHaveAttribute("href", "/contacts");
+    expect(screen.getByRole("link", { name: /campaigns/i })).toHaveAttribute("href", "/campaigns");
+    expect(screen.getByRole("link", { name: /templates/i })).toHaveAttribute("href", "/templates");
+    expect(screen.getByRole("link", { name: /analytics/i })).toHaveAttribute("href", "/analytics");
+    expect(screen.getByRole("link", { name: /settings/i })).toHaveAttribute("href", "/settings");
   });
 
-  it("renders the current dashboard placeholder pages", () => {
+  it("renders the dashboard page with stats and activity", () => {
     const { rerender } = render(<DashboardPage />);
-    expect(screen.getByText("Dashboard")).toBeInTheDocument();
-    expect(screen.getByText("Recent Activity")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+      /good (morning|afternoon|evening)/i
+    );
     expect(screen.getByText("Total Contacts")).toBeInTheDocument();
-    expect(screen.getByText("Active Campaigns")).toBeInTheDocument();
-    expect(screen.getByText("Open Rate")).toBeInTheDocument();
-    expect(screen.getByText("Response Rate")).toBeInTheDocument();
-    expect(screen.getAllByText("—")).toHaveLength(4);
+    expect(screen.getByText("Recent Activity")).toBeInTheDocument();
 
     rerender(<ContactsPage />);
     expect(screen.getByText("Contacts")).toBeInTheDocument();
@@ -132,7 +177,7 @@ describe("app routes and layouts", () => {
     expect(screen.getByText("Campaign management will be implemented in Phase 4.")).toBeInTheDocument();
 
     rerender(<SettingsPage />);
-    expect(screen.getByText("Settings")).toBeInTheDocument();
-    expect(screen.getByText("Account settings will be implemented in Phase 2.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/settings/i);
+    expect(screen.getByText("Account Profile")).toBeInTheDocument();
   });
 });

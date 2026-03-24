@@ -9,6 +9,8 @@ import {
   CardTitle,
   Input,
   Modal,
+  Select,
+  Switch,
   Table,
   TableBody,
   TableCell,
@@ -87,6 +89,55 @@ describe("UI primitives", () => {
 
     rerender(<Input id="custom-id" label="Email" />);
     expect(screen.getByLabelText("Email")).toHaveAttribute("id", "custom-id");
+  });
+
+  it("renders select labels with generated and explicit ids", () => {
+    const { rerender } = render(
+      <Select label="Primary LLM Provider">
+        <option value="gemini">Gemini</option>
+      </Select>,
+    );
+
+    const generatedLabel = screen.getByText("Primary LLM Provider");
+    const generatedSelect = screen.getByLabelText("Primary LLM Provider");
+
+    expect(generatedSelect).toHaveAttribute("id");
+    expect(generatedLabel).toHaveAttribute("for", generatedSelect.getAttribute("id"));
+
+    rerender(
+      <Select id="llm-provider" label="Provider">
+        <option value="openrouter">OpenRouter</option>
+      </Select>,
+    );
+
+    const explicitLabel = screen.getByText("Provider");
+    const explicitSelect = screen.getByLabelText("Provider");
+
+    expect(explicitSelect).toHaveAttribute("id", "llm-provider");
+    expect(explicitLabel).toHaveAttribute("for", "llm-provider");
+  });
+
+  it("renders switch semantics with the current checked state", () => {
+    const { rerender } = render(<Switch aria-label="Notifications" checked={true} onCheckedChange={vi.fn()} />);
+
+    expect(screen.getByRole("switch", { name: "Notifications" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+
+    rerender(<Switch aria-label="Notifications" checked={false} onCheckedChange={vi.fn()} />);
+
+    expect(screen.getByRole("switch", { name: "Notifications" })).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+  });
+
+  it("applies switch className to the root label", () => {
+    render(<Switch aria-label="Email alerts" checked={true} onCheckedChange={vi.fn()} className="mt-0.5 shrink-0" />);
+
+    const switchInput = screen.getByRole("switch", { name: "Email alerts" });
+    expect(switchInput.closest("label")).toHaveClass("mt-0.5", "shrink-0");
   });
 
   it("opens and closes the modal based on the open prop and forwards close events", () => {
