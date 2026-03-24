@@ -47,3 +47,6 @@ postgres_data/
 # Misc
 .DS_Store
 *.pem
+
+# Local planning docs
+outreachos-implementation-plan.md

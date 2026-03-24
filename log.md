@@ -246,7 +246,7 @@ Comprehensive accessibility audit and fixes across all Phase 2 UI components to 
      - Added `role="alert"` to OAuth error messages
      - Implemented cross-blocking: OAuth pending disables email submit, email pending disables OAuth buttons
      - Fixed OAuth pending state: only clears on failure (not on successful redirect) to prevent UI flicker
-     - Added `finally` block for reliable pending state cleanup on errors
+     - Initially added a `finally` block for unconditional pending state cleanup (always clears regardless of outcome)
    - **Server Actions (`app/(auth)/login/actions.ts`, `app/(auth)/signup/actions.ts`)**
      - Sanitized error logging to avoid logging full error objects or PII
      - Secured error messages with generic user-facing text
@@ -281,7 +281,7 @@ Comprehensive accessibility audit and fixes across all Phase 2 UI components to 
   - `@outreachos/mcp-server`: 3 tests (1 file)
 
 ### Bugs Fixed
-1. **OAuth Pending State Flicker** — Removed `finally` block that cleared pending state too eagerly on successful OAuth redirects
+1. **OAuth Pending State Flicker** — Removed the unconditional `finally` block and moved pending state cleanup into the `catch` block for error-specific cleanup only, preventing premature clearing on successful OAuth redirects
 2. **Missing Client Directive** — Added `"use client"` to dashboard page for `useSession()` hook
 3. **Hardcoded Greeting** — Replaced static "Good morning" with dynamic time-aware greeting
 4. **Sign-Out Error Swallowing** — Added user-visible error feedback in sidebar when sign-out fails
