@@ -34,6 +34,8 @@ describe("@outreachos/db", () => {
       client: unknown;
       schema: Record<string, unknown>;
     };
+    // Trigger lazy db initialization so mocks are called before assertions
+    void database.client;
   });
 
   afterEach(() => {

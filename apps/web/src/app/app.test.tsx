@@ -84,6 +84,38 @@ vi.mock("./(auth)/signup/actions", () => ({
   signUpWithEmail: vi.fn(),
 }));
 
+vi.mock("@/lib/hooks/use-contacts", () => ({
+  useContacts: vi.fn(() => ({ data: undefined, isLoading: false })),
+  useContactGroups: vi.fn(() => ({ data: [] })),
+  useDeleteContacts: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
+  useContact: vi.fn(() => ({ data: null, isLoading: false })),
+  contactKeys: {
+    all: ["contacts"],
+    lists: () => ["contacts", "list"],
+    list: (p: unknown) => ["contacts", "list", p],
+    details: () => ["contacts", "detail"],
+    detail: (id: string) => ["contacts", "detail", id],
+    groups: () => ["contacts", "groups"],
+  },
+}));
+
+// Mock Modal component (HTML dialog not fully supported in jsdom)
+vi.mock("@/components/ui", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/components/ui")>();
+  return {
+    ...actual,
+    Modal: ({ open, onClose, title, children }: { open: boolean; onClose: () => void; title?: string; children: React.ReactNode }) => {
+      if (!open) return null;
+      return (
+        <div role="dialog" aria-modal="true">
+          {title && <h2>{title}</h2>}
+          {children}
+        </div>
+      );
+    },
+  };
+});
+
 import AuthLayout from "./(auth)/layout";
 import LoginPage from "./(auth)/login/page";
 import SignupPage from "./(auth)/signup/page";
@@ -170,7 +202,7 @@ describe("app routes and layouts", () => {
 
     rerender(<ContactsPage />);
     expect(screen.getByText("Contacts")).toBeInTheDocument();
-    expect(screen.getByText("Contact management will be implemented in Phase 3.")).toBeInTheDocument();
+    expect(screen.getByText("No contacts yet")).toBeInTheDocument();
 
     rerender(<CampaignsPage />);
     expect(screen.getByText("Campaigns")).toBeInTheDocument();

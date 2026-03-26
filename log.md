@@ -296,3 +296,128 @@ Comprehensive accessibility audit and fixes across all Phase 2 UI components to 
 
 ### Open Questions
 - None. All accessibility findings addressed and validated.
+
+## Phase 3 — Contact Management & Data Layer
+
+### Date: 2026-03-25
+
+### Decisions Made
+
+1. **Stitch Screen Conversions (4 screens):**
+   - **Upload Contacts (`/contacts/upload`)** — Drag-and-drop zone with file validation (CSV/XLSX/XLS, 25MB max), required columns display, feature cards (CSV Template, Zapier, AI Auto-Mapping). Accessible drop zone with ARIA role/label.
+   - **Enrichment (`/contacts/enrich`)** — Configuration panel with confidence threshold slider, toggle switches (LinkedIn retrieval, BYOK Hunter.io key), progress bar, start/skip buttons.
+   - **Contacts List (`/contacts`)** — Server-side search/sort/filter via TanStack Query hooks, group filter dropdown, batch select with export/delete actions, score badges, loading spinner.
+   - **Contact Detail (`/contacts/[id]`)** — Full contact profile with Hunter Intelligence card (score, status, sources), enrichment metadata, analytics placeholders (hourly/daily histograms), custom fields display.
+
+2. **ContactService (`packages/services/src/contact-service.ts`)** — Static methods for all contact operations:
+   - **CRUD:** `list` (search, group filter via subquery, sort, paginate), `getById`, `create`, `update`, `delete` (batch)
+   - **CSV Parsing:** `parseCSV` with header normalization (maps 20+ column name variations), `parseCSVLine` with RFC 4180 quoted field support, `escapeCSV` for export
+   - **Bulk Create:** `bulkCreate` with 100-row batching to avoid DB parameter limits, per-row error collection
+   - **Group Management:** `listGroups`, `createGroup`, `addToGroup`, `removeFromGroup`, `deleteGroup`
+   - **Export:** `exportCSV` generates full CSV string with all contact fields
+   - **Enrichment Support:** `getUnenriched` (contacts without email), `updateEnrichment` (write Hunter.io results)
+
+3. **EnrichmentService (`packages/services/src/enrichment-service.ts`)** — Hunter.io integration:
+   - **Email Finder + Verifier pipeline** — Two-step: find email by domain/name, then verify deliverability
+   - **Confidence gating** — Configurable threshold (default 80), only accepts `valid`/`accept_all` status
+   - **Rate limiting** — Exponential backoff retry on HTTP 429 (base 1s, max 3 retries), 100ms throttle between contacts
+   - **Batch processing** — Sequential processing with progress callbacks for streaming
+   - **Re-enrichment** — Single contact re-enrichment by ID
+   - **Domain extraction** — Robust URL parsing with bare-domain fallback
+
+4. **API Endpoints (10 routes):**
+   - `POST /api/contacts/upload` — FormData file upload, XLSX support via dynamic `xlsx` import, CSV parsing, bulk insert
+   - `GET /api/contacts` — List with search/group/sort/pagination query params
+   - `POST /api/contacts` — Create single contact
+   - `DELETE /api/contacts` — Batch delete by IDs array
+   - `GET /api/contacts/[id]` — Get single contact
+   - `PATCH /api/contacts/[id]` — Update contact fields
+   - `GET /api/contacts/export` — CSV download with Content-Disposition header
+   - `GET /api/contacts/groups` — List groups
+   - `POST /api/contacts/groups` — Create group
+   - `POST /api/enrichment/batch` — Streaming NDJSON progress via ReadableStream
+
+5. **Auth Helper (`lib/auth/session.ts`)** — `getAuthAccount()` resolves authenticated user's session to their DB account record via email lookup. Used by all API routes for authorization scoping.
+
+6. **TanStack Query Hooks (`lib/hooks/use-contacts.ts`):**
+   - `useContacts`, `useContact`, `useCreateContact`, `useUpdateContact`, `useDeleteContacts`, `useContactGroups`, `useCreateGroup`
+   - Structured query keys for granular cache invalidation
+   - Optimistic cache update on contact detail after mutation
+
+7. **Package Configuration Changes:**
+   - Source-level TypeScript exports (`"types": "./src/index.ts"`) in `@outreachos/db` and `@outreachos/services` package.json — enables type resolution without building packages first
+   - Added `drizzle-orm` as direct dependency of `@outreachos/services` (was only transitive via `@outreachos/db`)
+   - Added `xlsx` as dependency of `@outreachos/web` for Excel file parsing
+   - Added `drizzle-orm` as devDependency of `@outreachos/web` for type resolution in session helper
+
+### Test Suites Added (Phase 3)
+
+- `packages/services/src/contact-service.test.ts` — **20 tests:** parseCSVLine (6), parseCSV (10), escapeCSV (4)
+- `packages/services/src/enrichment-service.test.ts` — **23 tests:** extractDomain (11), delay (1), fetchWithRetry (5), enrichContact (6)
+- `packages/services/src/index.test.ts` — **Updated to 4 tests:** barrel exports, static method checks, stub instantiation
+- `apps/web/src/app/(dashboard)/contacts/contacts.test.tsx` — **20 tests:** ContactsPage List (7), UploadContactsPage (5), EnrichContactsPage (4), ContactDetailPage (4)
+- `apps/web/src/app/app.test.tsx` — **Updated:** Added `use-contacts` mock, updated ContactsPage assertion for new UI
+
+### Test Infrastructure
+- `packages/services/vitest.config.ts` — Added `@outreachos/db` alias to mock module, preventing `DATABASE_URL` requirement in pure unit tests
+- `packages/services/src/__mocks__/db.ts` — Mock DB client with chainable query builder stubs
+
+### Final Validation
+- `pnpm type-check` (web) — **passes**
+- `pnpm type-check` (services) — **passes**
+- `pnpm test:unit` (services) — **passes** (47 tests across 3 files)
+- `pnpm test:unit` (web) — **passes** (74 tests across 12 files)
+- **Total: 121 tests, 0 failures**
+
+### Open Questions
+- Hunter.io API key must be configured via `HUNTER_API_KEY` env var or BYOK in settings — no key bundled
+- Enrichment batch endpoint streams NDJSON; client-side consumption hook not yet wired to the enrich page (UI shows static progress bar)
+- Contact analytics (per-contact email stats, histograms) are placeholder — real data depends on Phase 5 email sending infrastructure
+- Excel parsing uses `xlsx` package which is large (~2MB) — consider lazy-loading or server-side-only bundling optimization
+
+---
+
+## Full Test Suite Workflow — Phase 3 Refinement
+
+### Date: 2026-03-26
+
+### Bugs Found & Fixed
+
+1. **Build-time crash: eager auth initialization** — `lib/auth/server.ts` called `createNeonAuth()` at module scope, causing Next.js build to fail when `NEON_AUTH_BASE_URL` was absent. **Fix:** Converted to lazy singleton via `getAuth()` with Proxy backward-compat wrapper. Updated `app/api/auth/[...path]/route.ts` to use lazy handler caching.
+
+2. **Build-time crash: eager DB initialization** — `packages/db/src/drizzle.ts` called `neon()` and `drizzle()` at module scope, causing Next.js page data collection to fail when `DATABASE_URL` was absent. **Fix:** Converted to lazy singleton via `getDb()` with Proxy backward-compat wrapper. Updated db test to trigger lazy init before mock assertions.
+
+3. **Unsafe type assertion for route params** — `contacts/[id]/page.tsx` used `params.id as string` which is unsafe when `params.id` could be `string[]`. **Fix:** Added `Array.isArray` check with early-return error UI for missing contactId.
+
+### Refactoring
+
+1. **Extracted shared test helpers** — Created `apps/web/src/test/api-helpers.ts` with `createMockRequest()` and `createMockAccount()`. Deduplicated from 5 test files (contacts route, [id] route, export route, groups route, upload route).
+
+2. **Auth route lazy handler** — `app/api/auth/[...path]/route.ts` restructured from eager `export const { GET, POST } = auth.handler()` to lazy cached handler functions.
+
+### New Tests Created
+
+| File | Tests | Coverage |
+|---|---|---|
+| `app/api/contacts/route.test.ts` | 18 | GET (auth, pagination, sorting, clamping, errors), POST (auth, validation, customFields, creation), DELETE (auth, batch limits, id filtering) |
+| `app/api/contacts/[id]/route.test.ts` | 10 | GET (auth, 404, success, errors), PATCH (auth, JSON validation, schema validation, 404, success, errors) |
+| `app/api/contacts/groups/route.test.ts` | 8 | GET (auth, success, errors), POST (auth, name validation, creation, JSON errors, service errors) |
+| `app/api/contacts/upload/route.test.ts` | 9 | Auth, file validation (missing, type, size), CSV parsing errors, empty data, success, bulk errors, service errors |
+
+### Security Audit
+
+- **17 vulnerabilities** found via `pnpm audit`
+  - `xlsx@0.18.5` — 2 high (Prototype Pollution, ReDoS) — **production dep**, no OSS patch (SheetJS paywall). Mitigated by server-side-only usage with 25MB file size limit.
+  - `minimatch`, `picomatch` — dev-only transitive deps (eslint, vitest). No production risk.
+- **No hardcoded secrets** detected in source code.
+
+### Final Validation
+
+- `pnpm type-check` (all workspaces) — **passes**
+- `pnpm test:unit` (all workspaces) — **187 tests, 0 failures**
+  - `@outreachos/web`: 17 files, 123 tests
+  - `@outreachos/services`: 3 files, 52 tests
+  - `@outreachos/db`: 1 file, 9 tests
+  - `@outreachos/mcp-server`: 1 file, 3 tests
+- `pnpm build` (web) — **succeeds** (16 routes, all static/dynamic correctly categorized)
+- No integration, E2E, or performance test suites configured yet

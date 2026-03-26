@@ -36,7 +36,9 @@ describe("lib/auth", () => {
 
   describe("server", () => {
     it("creates a NeonAuth instance with baseUrl and cookie secret from env", async () => {
-      await import("./server");
+      const mod = await import("./server");
+      // Trigger lazy initialization
+      mod.getAuth();
 
       expect(createNeonAuthMock).toHaveBeenCalledWith({
         baseUrl: "https://ep-test.neonauth.us-east-1.aws.neon.tech/testdb/auth",
@@ -55,14 +57,16 @@ describe("lib/auth", () => {
 
     it("throws if NEON_AUTH_BASE_URL is missing", async () => {
       delete process.env.NEON_AUTH_BASE_URL;
-      await expect(() => import("./server")).rejects.toThrow(
+      const mod = await import("./server");
+      expect(() => mod.getAuth()).toThrow(
         "NEON_AUTH_BASE_URL environment variable is required but not set."
       );
     });
 
     it("throws if NEON_AUTH_COOKIE_SECRET is missing", async () => {
       delete process.env.NEON_AUTH_COOKIE_SECRET;
-      await expect(() => import("./server")).rejects.toThrow(
+      const mod = await import("./server");
+      expect(() => mod.getAuth()).toThrow(
         "NEON_AUTH_COOKIE_SECRET environment variable is required but not set."
       );
     });

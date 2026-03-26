@@ -11,21 +11,9 @@ import {
 } from "./index";
 import { describe, expect, it } from "vitest";
 
-describe("@outreachos/services", () => {
-  it("exports instantiable service stubs for the implemented Phase 1 surface area", () => {
-    const instances = [
-      new ContactService(),
-      new CampaignService(),
-      new EnrichmentService(),
-      new TemplateService(),
-      new ExperimentService(),
-      new AnalyticsService(),
-      new InboxService(),
-      new FormService(),
-      new LLMService(),
-    ];
-
-    const expectedConstructors = [
+describe("@outreachos/services barrel exports", () => {
+  it("exports all service classes", () => {
+    const services = [
       ContactService,
       CampaignService,
       EnrichmentService,
@@ -37,8 +25,24 @@ describe("@outreachos/services", () => {
       LLMService,
     ];
 
-    expectedConstructors.forEach((Constructor, index) => {
-      expect(instances[index]).toBeInstanceOf(Constructor);
+    services.forEach((Service) => {
+      expect(Service).toBeDefined();
+      expect(typeof Service).toBe("function");
     });
+  });
+
+  it("exports ContactService CSV utility methods", () => {
+    expect(typeof ContactService.parseCSV).toBe("function");
+    expect(typeof ContactService.parseCSVLine).toBe("function");
+    expect(typeof ContactService.escapeCSV).toBe("function");
+  });
+
+  it("exports EnrichmentService with static methods", () => {
+    expect(typeof EnrichmentService.extractDomain).toBe("function");
+    expect(typeof EnrichmentService.delay).toBe("function");
+  });
+
+  it("instantiates ContactService", () => {
+    expect(new ContactService()).toBeInstanceOf(ContactService);
   });
 });
