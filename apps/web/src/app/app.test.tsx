@@ -84,6 +84,26 @@ vi.mock("./(auth)/signup/actions", () => ({
   signUpWithEmail: vi.fn(),
 }));
 
+vi.mock("@/lib/hooks/use-campaigns", () => ({
+  useCampaigns: vi.fn(() => ({ data: [], isLoading: false })),
+  useCampaign: vi.fn(() => ({ data: null, isLoading: false })),
+  useCreateCampaign: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+  useUpdateCampaign: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+  useDeleteCampaign: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
+  useCampaignAnalytics: vi.fn(() => ({ data: null, isLoading: false })),
+}));
+
+vi.mock("@/lib/hooks/use-templates", () => ({
+  useTemplates: vi.fn(() => ({ data: [], isLoading: false })),
+  useTemplate: vi.fn(() => ({ data: null, isLoading: false })),
+  useCreateTemplate: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+  useUpdateTemplate: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+  useDeleteTemplate: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
+  useGenerateEmail: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+  useGenerateSubjects: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+  useRewriteEmail: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+}));
+
 vi.mock("@/lib/hooks/use-contacts", () => ({
   useContacts: vi.fn(() => ({ data: undefined, isLoading: false })),
   useContactGroups: vi.fn(() => ({ data: [] })),
@@ -206,7 +226,7 @@ describe("app routes and layouts", () => {
 
     rerender(<CampaignsPage />);
     expect(screen.getByText("Campaigns")).toBeInTheDocument();
-    expect(screen.getByText("Campaign management will be implemented in Phase 4.")).toBeInTheDocument();
+    expect(screen.getByText("No campaigns yet")).toBeInTheDocument();
 
     rerender(<SettingsPage />);
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/settings/i);

@@ -1,11 +1,16 @@
 export { ContactService } from "./contact-service.js";
 export type { CreateContactInput, UpdateContactInput, ContactListOptions, ParsedRow, UploadResult } from "./contact-service.js";
 export { CampaignService } from "./campaign-service.js";
+export type { CampaignType, CampaignStatus, CreateCampaignInput, UpdateCampaignInput, SendConfig, SendProgress, WebhookEvent } from "./campaign-service.js";
 export { EnrichmentService } from "./enrichment-service.js";
 export type { EnrichmentConfig, EnrichmentResult, BatchProgress } from "./enrichment-service.js";
 export { TemplateService } from "./template-service.js";
+export type { CreateTemplateInput, UpdateTemplateInput, RenderContext } from "./template-service.js";
 export { ExperimentService } from "./experiment-service.js";
+export type { ExperimentType, ExperimentStatus, CreateExperimentInput, BatchResult, ExperimentSummary } from "./experiment-service.js";
 export { AnalyticsService } from "./analytics-service.js";
+export type { CampaignMetrics, HourlyMetric, DailyMetric } from "./analytics-service.js";
 export { InboxService } from "./inbox-service.js";
 export { FormService } from "./form-service.js";
 export { LLMService } from "./llm-service.js";
+export type { LLMConfig, GenerateEmailOptions, SubjectLineOptions, LLMResponse } from "./llm-service.js";

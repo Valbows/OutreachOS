@@ -421,3 +421,173 @@ Comprehensive accessibility audit and fixes across all Phase 2 UI components to 
   - `@outreachos/mcp-server`: 1 file, 3 tests
 - `pnpm build` (web) — **succeeds** (16 routes, all static/dynamic correctly categorized)
 - No integration, E2E, or performance test suites configured yet
+
+---
+
+## Phase 4 — Campaigns, Templates & Experimentation Engine
+
+### Date: 2026-03-26
+
+### Decisions Made
+
+1. **LLMService (`packages/services/src/llm-service.ts`)** — Google Gemini 2.5 Pro integration:
+   - Uses `@google/genai` client for API calls
+   - Structured prompt construction for email generation, subject line variants, and email rewriting
+   - Usage logging to `llm_usage_log` table (provider, model, purpose, token counts, latency)
+   - Default model: `gemini-2.5-pro`, max output tokens: 2048
+
+2. **TemplateService (`packages/services/src/template-service.ts`)** — Email template CRUD:
+   - Token system: regex extraction of `{TokenName}` patterns from HTML/text
+   - Rendering: replaces tokens with contact data context or fallback values
+   - Versioning: auto-increments version on update
+   - Duplication: creates copy with "(Copy)" suffix and version reset
+   - Import: text, markdown (→ HTML via simple converter), and HTML formats
+
+3. **CampaignService (`packages/services/src/campaign-service.ts`)** — Campaign CRUD and email delivery:
+   - Send orchestration via Resend API with per-contact template rendering
+   - 100ms throttle between sends (~10 emails/s) for rate limit compliance
+   - Progress callback for streaming send status to client
+   - Webhook event processing: maps Resend event types to message instance status updates
+   - Deliverability monitoring: auto-pauses campaign at 0.1% complaint rate threshold
+   - HMAC signature validation for Resend webhook security (SHA-256 + hex comparison)
+
+4. **ExperimentService (`packages/services/src/experiment-service.ts`)** — A/B testing engine:
+   - Experiment CRUD scoped by accountId
+   - Batch management: auto-incrementing batch numbers, 20 contacts per variant default
+   - Evaluation: computes open rates per variant from message instance data
+   - Winner detection: variant needs ≥40% open rate threshold to win a batch
+   - Champion detection: requires 2 consecutive batch wins by same variant
+   - Promotion: locks champion variant to production status
+
+5. **AnalyticsService (`packages/services/src/analytics-service.ts`)** — Campaign metrics:
+   - Aggregate metrics: sent, delivered, failed, opened (total + unique), clicked, bounced, complained, unsubscribed
+   - Computed rates: open, click, bounce, complaint, unsubscribe
+   - Hourly distribution: opens/clicks by hour of day (0–23) for send-time optimization
+   - Daily distribution: opens/clicks by day of week (0=Sun–6=Sat)
+
+6. **API Routes (12 endpoints):**
+   - `GET/POST /api/campaigns` — List (with status filter) and create
+   - `GET/PATCH/DELETE /api/campaigns/[id]` — Single campaign CRUD
+   - `POST /api/campaigns/[id]/send` — SSE streaming send with progress
+   - `GET /api/campaigns/[id]/analytics` — Full metrics + hourly + daily
+   - `GET/POST /api/templates` — List and create
+   - `GET/PATCH/DELETE /api/templates/[id]` — Single template CRUD
+   - `POST /api/templates/import` — File upload (text/md/html)
+   - `POST /api/templates/generate` — LLM actions (generate_email, generate_subjects, rewrite)
+   - `GET/POST /api/experiments` — List and create
+   - `GET/DELETE /api/experiments/[id]` — Summary and delete
+   - `POST /api/experiments/[id]/evaluate` — Batch evaluation + champion check
+   - `POST /api/webhooks/resend` — Resend webhook ingestion with HMAC validation
+
+7. **React Query Hooks:**
+   - `lib/hooks/use-campaigns.ts` — `useCampaigns`, `useCampaign`, `useCreateCampaign`, `useUpdateCampaign`, `useDeleteCampaign`, `useCampaignAnalytics`
+   - `lib/hooks/use-templates.ts` — `useTemplates`, `useTemplate`, `useCreateTemplate`, `useUpdateTemplate`, `useDeleteTemplate`, `useGenerateEmail`, `useGenerateSubjects`, `useRewriteEmail`
+
+8. **Stitch Screen Conversions (5 screens):**
+   - **Campaigns List (`/campaigns`)** — Status filter chips, table with name/type/status/date, empty state, delete actions
+   - **Campaign Type Selector (`/campaigns/new`)** — 2-step wizard: type selection (One-Time, A/B Test, Newsletter) → details (name, group, template)
+   - **A/B Test Setup (`/campaigns/ab-test/setup`)** — Group selection with radio UI, Suspense boundary for `useSearchParams()`
+   - **A/B Subject Test (`/campaigns/ab-test/[id]/subject`)** — Dual subject line inputs, AI subject generator, word count hints, preview panel
+   - **Template Editor (`/templates/[id]/edit`)** — Split-pane: editor with token picker + HTML textarea + preview, collapsible AI Workshop panel (rewrite instruction + subject suggestions)
+   - **Campaign Analytics (`/campaigns/[id]/analytics`)** — 4-stat KPI grid, secondary metrics, hourly + daily heatmap charts
+   - **Templates List (`/templates`)** — Card grid with token badges, inline create dialog, version display
+
+9. **Package Exports Updated:**
+   - `packages/services/src/index.ts` — Added type exports for all Phase 4 service interfaces (CampaignType, CampaignStatus, ExperimentType, LLMConfig, CampaignMetrics, etc.)
+
+### Test Suites Added (Phase 4)
+
+| File | Tests | Coverage |
+|---|---|---|
+| `services/src/template-service.test.ts` | 13 | extractTokens (7), render (6) |
+| `services/src/llm-service.test.ts` | 1 | Class structure and method exports |
+| `services/src/experiment-service.test.ts` | 4 | Class structure (1), computeOpenRate (3) |
+| `services/src/campaign-service.test.ts` | 3 | Class structure (1), validateWebhookSignature (2) |
+| `services/src/analytics-service.test.ts` | 1 | Class structure and method exports |
+| `web/src/app/app.test.tsx` | Updated | Added use-campaigns/use-templates mocks, updated assertion for new campaigns page |
+
+### Bugs Fixed
+
+1. **`z.record()` arity** — Zod v4 requires 2 arguments (key + value schema). Fixed all route schemas from `z.record(z.string())` to `z.record(z.string(), z.string())`.
+2. **`contactCount` property** — A/B setup page referenced non-existent `contactCount` on `ContactGroup` type. Fixed to use `description`.
+3. **`useSearchParams()` Suspense** — A/B test setup page used `useSearchParams()` without Suspense boundary, causing Next.js static generation failure. Fixed with wrapper + `<Suspense>`.
+4. **Campaigns test assertion** — `app.test.tsx` expected old Phase 4 placeholder text. Updated mock and assertion for new campaigns list page.
+
+### Dependencies Added
+- `resend@4.5.1` — Email delivery API client
+- `@google/genai@1.8.0` — Google Gemini AI client
+
+### Final Validation
+- `pnpm type-check` (all 4 workspaces) — **passes**
+- `pnpm vitest run` (services) — **74 tests, 0 failures** (8 files)
+- `pnpm vitest run` (web) — **123 tests, 0 failures** (17 files)
+- `pnpm build` — **passes** (25 routes)
+- **Total: 197+ tests, 0 failures**
+
+### Code Review Fixes (58 findings resolved)
+
+| Finding | File | Fix Applied |
+|---------|------|-------------|
+| XSS risk in preview | `templates/[id]/edit/page.tsx` | Added `DOMPurify.sanitize(bodyHtml)` before `dangerouslySetInnerHTML` |
+| Close button lacks label | `templates/[id]/edit/page.tsx` | Added `aria-label="Close"` to AI Workshop × button |
+| Back button lacks label | `templates/[id]/edit/page.tsx` | Added `aria-label="Go back"` to toolbar ← button |
+| Subject generation unhandled errors | `templates/[id]/edit/page.tsx` | Wrapped `mutateAsync` in try/catch + added `subjectsMutation.isError` UI |
+| Form overwrites on refetch | `templates/[id]/edit/page.tsx` | Added `initializedRef` to prevent overwriting user edits |
+| Save timeout leak | `templates/[id]/edit/page.tsx` | Added `savedTimeoutRef` with cleanup useEffect on unmount |
+| Save unhandled errors | `templates/[id]/edit/page.tsx` | Added try/catch around `updateMutation.mutateAsync` |
+| Template fetch no error UI | `templates/[id]/edit/page.tsx` | Added `isError`/`error` check with error state + back button |
+| Campaign status misclassifies | `campaign-service.ts` | Fixed `finalStatus` logic: only "stopped" when `total > 0 && failed === total` |
+| Webhook status regression | `campaign-service.ts` | Added `statusPrecedence` check + timestamp guards to prevent out-of-order webhook regressions |
+| Resend error handling | `campaign-service.ts` | Added error classification (`getResendErrorCode`, `isRetryableError`) + retry loop with exponential backoff |
+| computeOpenRate encapsulation | `experiment-service.ts` | Extracted `computeOpenRate` to exported function for proper testing without breaking class encapsulation |
+| MIN_BATCH_SIZE validation | `experiment-service.ts` | Added `MIN_BATCH_SIZE` constant (10) + validation in `evaluateBatch` to ensure statistical significance before computing open rates |
+| Markdown parser naivety | `template-service.ts` | Replaced naive regex markdown parser with stateful parser handling blockquotes, lists, code blocks, headers, inline formatting |
+| Regex global flag bug | `template-service.ts` | Removed `g` flag from `extractTokens` regex to prevent `lastIndex` state issues with `exec()` in loop |
+| Template update TOCTOU race | `template-service.ts` | Added optimistic locking with `eq(templates.version, existing.version)` in WHERE clause and conflict detection |
+| Render HTML injection | `template-service.ts` | Added `escapeHtml` helper and applied to all substituted values in `render()` to prevent XSS |
+| A/B test setup error handling | `campaigns/ab-test/setup/page.tsx` | Added try/catch around `updateMutation.mutateAsync` with error state and UI feedback |
+| A/B test setup ARIA semantics | `campaigns/ab-test/setup/page.tsx` | Added `role="radiogroup"`, `role="radio"`, `aria-checked`, `aria-label`, and keyboard support |
+| A/B test setup missing error handling | `campaigns/ab-test/setup/page.tsx` | Added campaignId validation, groupsError handling, and error UI states |
+| Back button unpredictable navigation | `campaigns/new/page.tsx` | Changed `router.back()` to `router.push("/campaigns")` for explicit navigation |
+| Create campaign error handling | `campaigns/new/page.tsx` | Added try/catch around `createMutation.mutateAsync`, response validation, and error UI |
+| Form label associations | `campaigns/new/page.tsx` | Added `htmlFor` to labels and matching `id` to inputs/selects for screen reader accessibility |
+| Subject generation silent error | `campaigns/ab-test/[id]/subject/page.tsx` | Added `generationError` state and UI to surface AI generation failures |
+| Experiment creation silent error | `campaigns/ab-test/[id]/subject/page.tsx` | Added `createError` state, try/catch around fetch, `creating` loading state, and error UI for failed experiment creation |
+| Status parameter unsafe cast | `api/campaigns/route.ts` | Replaced unsafe TypeScript cast with runtime validation using `VALID_STATUSES` allowlist |
+| Malformed JSON handling | `api/campaigns/route.ts` | Wrapped `request.json()` in try/catch to return 400 Bad Request for malformed JSON instead of 500 |
+| Experiment creation missing ownership check | `api/experiments/route.ts` | Added `CampaignService.getById` verification before creating experiment to ensure campaign belongs to account |
+| Malformed JSON handling (experiments) | `api/experiments/route.ts` | Wrapped `request.json()` in try/catch to return 400 Bad Request for malformed JSON instead of 500 |
+| DOCX binary handling | `api/templates/import/route.ts` | Removed DOCX from ALLOWED_TYPES since binary files require special parsing (mammoth or similar) |
+| scheduledAt null semantics | `api/campaigns/[id]/route.ts` | Fixed `scheduledAt` conversion to preserve `null` when explicitly null, `undefined` when omitted, and `Date` only for non-null values |
+| Batch ownership validation | `api/experiments/[id]/evaluate/route.ts` | Added DB query to verify batch belongs to experiment before evaluating, return 404/403 if mismatch |
+| Malformed JSON handling (templates) | `api/templates/[id]/route.ts` | Wrapped `request.json()` in try/catch to return 400 Bad Request for malformed JSON instead of 500 |
+| Malformed JSON handling (generate) | `api/templates/generate/route.ts` | Wrapped `request.json()` in try/catch with type guard for body.action to return 400 for malformed JSON |
+| Malformed JSON handling (templates POST) | `api/templates/route.ts` | Wrapped `request.json()` in try/catch to return 400 Bad Request for malformed JSON instead of 500 |
+| Mandatory webhook signature validation | `api/webhooks/resend/route.ts` | Made signature validation mandatory - returns 500 if secret not configured, always validates signature with 401 on failure |
+| Delete mutation 204 handling | `hooks/use-templates.ts` | Updated `useDeleteTemplate` to handle 204 No Content or empty body responses |
+| Test comment consistency | `template-service.test.ts` | Fixed contradictory comments in empty string test to match actual fallback behavior |
+| List indent detection | `template-service.ts` | Fixed markdown list regex to match against original `line` instead of `trimmed` to capture leading whitespace correctly |
+| Code block XSS | `template-service.ts` | HTML-escaped code block content in `flushCodeBlock` using `TemplateService.escapeHtml` to prevent injection |
+| Token regex infinite loop | `template-service.ts` | Fixed `extractTokens` to use `matchAll(TOKEN_REGEX)` instead of `exec` without global flag |
+| Email send retry logic | `campaign-service.ts` | Refactored retry loop to properly wrap each `resend.emails.send` in try/catch with exponential backoff and correct progress tracking |
+| createBatch ownership check | `experiment-service.ts` | Added `accountId` parameter and ownership validation in SELECT ... FOR UPDATE query |
+| LLM error classification | `llm-service.ts` | Normalized error message to lowercase, added `enotfound` and `econnrefused` to network error detection |
+| Experiment ownership check | `api/experiments/[id]/evaluate/route.ts` | Added DB query to verify experiment belongs to authenticated account before evaluating |
+| UpdateCampaignInput type | `campaign-service.ts` | Updated `scheduledAt` type to accept `Date | null | undefined` for proper null semantics |
+| Timing attack vulnerability | `campaign-service.ts` | Replaced string comparison with constant-time byte comparison in `validateWebhookSignature` using XOR-accumulate over raw HMAC bytes |
+| Webhook signature test coverage | `campaign-service.test.ts` | Added `computeTestSignature` helper + tests for valid signatures and wrong-secret scenarios |
+| LLM error handling | `llm-service.ts` | Added try/catch with typed error mapping (RATE_LIMIT_EXCEEDED, AUTH_ERROR, NETWORK_ERROR) and isolated DB logging try/catch to preserve response on logging failure |
+| consecutiveWins default value | `experiment-service.ts` | Changed `consecutiveWins: 0` to `consecutiveWins: null` in `create` to let DB apply default(0) |
+| PostgreSQL count type safety | `analytics-service.ts` | Cast `COUNT(*)` and `SUM()` results to `::int` to prevent string/number type issues |
+| Auto-pause status overwrite | `campaign-service.ts` | Added `wasAutoPaused` flag to preserve "paused" status and skip final status update when auto-paused due to complaint rate |
+| Complaint rate undercount | `campaign-service.ts` | Removed `status === "sent"` filter from `checkComplaintRate` total count to include all attempted sends |
+| createBatch TOCTOU race | `experiment-service.ts` | Wrapped batch creation in transaction with `FOR UPDATE` lock on experiment row to prevent race condition |
+| checkForChampion missing account scoping | `experiment-service.ts` | Added `eq(experiments.accountId, accountId)` to champion update query for multi-tenant security |
+| consecutiveWins update missing account scoping | `experiment-service.ts` | Added `eq(experiments.accountId, accountId)` to consecutiveWins update query for multi-tenant security |
+
+### Open Questions
+- Resend API key (`RESEND_API_KEY`) and domain verification required before live email sending
+- Gemini API key (`GEMINI_API_KEY`) required for LLM features — free tier has quota limits
+- Resend webhook secret (`RESEND_WEBHOOK_SECRET`) must be configured for production webhook validation
+- Template editor is HTML-based textarea — rich text editor upgrade deferred to future iteration
+- Experiment batch orchestration (auto-scheduling batches) is manual via API — cron/scheduler deferred

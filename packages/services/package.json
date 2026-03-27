@@ -19,8 +19,10 @@
     "test:unit": "vitest run"
   },
   "dependencies": {
+    "@google/genai": "^1.46.0",
     "@outreachos/db": "workspace:*",
-    "drizzle-orm": "^0.44.0"
+    "drizzle-orm": "^0.44.0",
+    "resend": "^6.9.4"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
