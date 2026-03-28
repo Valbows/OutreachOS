@@ -4,6 +4,9 @@
  */
 
 import { z } from "zod";
+
+/** Dangerous keys that could enable prototype pollution */
+const DANGEROUS_KEYS = ["__proto__", "constructor", "prototype"] as const;
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   CampaignService,
@@ -19,30 +22,46 @@ import {
 import { db, accounts } from "@outreachos/db";
 import { eq } from "drizzle-orm";
 
-/** Active account context per session */
-let activeAccountId: string | null = null;
+/** Active account context per session — Map<sessionId, accountId> */
+const sessionAccountMap = new Map<string, string>();
 
-function requireAccountId(providedId?: string): string {
-  const id = providedId ?? activeAccountId;
+function requireAccountId(sessionId: string, providedId?: string): string {
+  const id = providedId ?? sessionAccountMap.get(sessionId);
   if (!id) throw new Error("No account_id provided and no active account set. Use set_active_account first.");
   return id;
 }
 
-export function registerTools(server: McpServer): void {
+/** Clean up session state when a session ends */
+export function cleanupSession(sessionId: string): void {
+  sessionAccountMap.delete(sessionId);
+}
+
+export function registerTools(server: McpServer, sessionId: string): number {
+  let count = 0;
   // ────────────────────────────────────────────
   // Account Tools
   // ────────────────────────────────────────────
 
+  count++;
   server.tool(
     "list_accounts",
-    "List all accounts accessible to the current user",
-    {},
-    async () => {
-      const result = await db.select().from(accounts);
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    "List accounts accessible to the current user (requires authentication)",
+    {
+      account_id: z.string().uuid().optional().describe("Account ID to verify access (uses active account if omitted)"),
+    },
+    async ({ account_id }) => {
+      const id = requireAccountId(sessionId, account_id);
+      // Verify user has access to the specified account before listing
+      const [account] = await db.select().from(accounts).where(eq(accounts.id, id)).limit(1);
+      if (!account) {
+        return { content: [{ type: "text", text: "Unauthorized: Account not found or access denied" }], isError: true };
+      }
+      // Return only the account the user has access to (not all accounts)
+      return { content: [{ type: "text", text: JSON.stringify([account], null, 2) }] };
     },
   );
 
+  count++;
   server.tool(
     "set_active_account",
     "Set the active account for subsequent tool calls",
@@ -50,7 +69,7 @@ export function registerTools(server: McpServer): void {
     async ({ account_id }) => {
       const [account] = await db.select().from(accounts).where(eq(accounts.id, account_id)).limit(1);
       if (!account) return { content: [{ type: "text", text: "Account not found" }], isError: true };
-      activeAccountId = account_id;
+      sessionAccountMap.set(sessionId, account_id);
       return { content: [{ type: "text", text: `Active account set to: ${account.name} (${account_id})` }] };
     },
   );
@@ -59,6 +78,7 @@ export function registerTools(server: McpServer): void {
   // Campaign Tools
   // ────────────────────────────────────────────
 
+  count++;
   server.tool(
     "list_campaigns",
     "List campaigns for the active account with optional status filter",
@@ -67,12 +87,13 @@ export function registerTools(server: McpServer): void {
       status: z.enum(["draft", "active", "paused", "completed", "stopped"]).optional(),
     },
     async ({ account_id, status }) => {
-      const id = requireAccountId(account_id);
+      const id = requireAccountId(sessionId, account_id);
       const result = await CampaignService.list(id, status as any);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     },
   );
 
+  count++;
   server.tool(
     "get_campaign_details",
     "Get detailed information about a specific campaign including metrics",
@@ -81,7 +102,7 @@ export function registerTools(server: McpServer): void {
       account_id: z.string().uuid().optional(),
     },
     async ({ campaign_id, account_id }) => {
-      const id = requireAccountId(account_id);
+      const id = requireAccountId(sessionId, account_id);
       const campaign = await CampaignService.getById(id, campaign_id);
       if (!campaign) return { content: [{ type: "text", text: "Campaign not found" }], isError: true };
       const metrics = await AnalyticsService.getCampaignMetrics(campaign_id);
@@ -89,6 +110,7 @@ export function registerTools(server: McpServer): void {
     },
   );
 
+  count++;
   server.tool(
     "start_campaign",
     "Start/resume a campaign (changes status to active)",
@@ -97,13 +119,14 @@ export function registerTools(server: McpServer): void {
       account_id: z.string().uuid().optional(),
     },
     async ({ campaign_id, account_id }) => {
-      const id = requireAccountId(account_id);
+      const id = requireAccountId(sessionId, account_id);
       const updated = await CampaignService.update(id, campaign_id, { status: "active" });
       if (!updated) return { content: [{ type: "text", text: "Campaign not found" }], isError: true };
       return { content: [{ type: "text", text: `Campaign ${campaign_id} started` }] };
     },
   );
 
+  count++;
   server.tool(
     "pause_campaign",
     "Pause an active campaign",
@@ -112,13 +135,14 @@ export function registerTools(server: McpServer): void {
       account_id: z.string().uuid().optional(),
     },
     async ({ campaign_id, account_id }) => {
-      const id = requireAccountId(account_id);
+      const id = requireAccountId(sessionId, account_id);
       const updated = await CampaignService.update(id, campaign_id, { status: "paused" });
       if (!updated) return { content: [{ type: "text", text: "Campaign not found" }], isError: true };
       return { content: [{ type: "text", text: `Campaign ${campaign_id} paused` }] };
     },
   );
 
+  count++;
   server.tool(
     "stop_campaign",
     "Permanently stop a campaign",
@@ -127,13 +151,14 @@ export function registerTools(server: McpServer): void {
       account_id: z.string().uuid().optional(),
     },
     async ({ campaign_id, account_id }) => {
-      const id = requireAccountId(account_id);
+      const id = requireAccountId(sessionId, account_id);
       const updated = await CampaignService.update(id, campaign_id, { status: "stopped" });
       if (!updated) return { content: [{ type: "text", text: "Campaign not found" }], isError: true };
       return { content: [{ type: "text", text: `Campaign ${campaign_id} stopped` }] };
     },
   );
 
+  count++;
   server.tool(
     "duplicate_campaign",
     "Duplicate a campaign with a new name",
@@ -143,7 +168,7 @@ export function registerTools(server: McpServer): void {
       account_id: z.string().uuid().optional(),
     },
     async ({ campaign_id, new_name, account_id }) => {
-      const id = requireAccountId(account_id);
+      const id = requireAccountId(sessionId, account_id);
       const original = await CampaignService.getById(id, campaign_id);
       if (!original) return { content: [{ type: "text", text: "Campaign not found" }], isError: true };
       const duplicate = await CampaignService.create({
@@ -162,6 +187,7 @@ export function registerTools(server: McpServer): void {
   // Template Tools
   // ────────────────────────────────────────────
 
+  count++;
   server.tool(
     "create_campaign_template",
     "Create a new email template",
@@ -173,7 +199,7 @@ export function registerTools(server: McpServer): void {
       account_id: z.string().uuid().optional(),
     },
     async ({ name, subject, body_html, body_text, account_id }) => {
-      const id = requireAccountId(account_id);
+      const id = requireAccountId(sessionId, account_id);
       const template = await TemplateService.create({
         accountId: id,
         name,
@@ -185,6 +211,7 @@ export function registerTools(server: McpServer): void {
     },
   );
 
+  count++;
   server.tool(
     "generate_template_from_prompt",
     "Generate an email template using AI from a natural language prompt",
@@ -197,7 +224,7 @@ export function registerTools(server: McpServer): void {
       account_id: z.string().uuid().optional(),
     },
     async ({ goal, audience, tone, cta, template_name, account_id }) => {
-      const id = requireAccountId(account_id);
+      const id = requireAccountId(sessionId, account_id);
       // Get LLM config from account
       const [account] = await db.select().from(accounts).where(eq(accounts.id, id)).limit(1);
       if (!account) return { content: [{ type: "text", text: "Account not found" }], isError: true };
@@ -232,6 +259,7 @@ export function registerTools(server: McpServer): void {
     },
   );
 
+  count++;
   server.tool(
     "update_campaign_template",
     "Update an existing email template",
@@ -244,7 +272,7 @@ export function registerTools(server: McpServer): void {
       account_id: z.string().uuid().optional(),
     },
     async ({ template_id, name, subject, body_html, body_text, account_id }) => {
-      const id = requireAccountId(account_id);
+      const id = requireAccountId(sessionId, account_id);
       const updated = await TemplateService.update(id, template_id, {
         name,
         subject,
@@ -260,13 +288,21 @@ export function registerTools(server: McpServer): void {
   // Analytics Tools
   // ────────────────────────────────────────────
 
+  count++;
   server.tool(
     "get_campaign_stats",
     "Get campaign performance metrics (open rate, click rate, bounces, etc.)",
     {
       campaign_id: z.string().uuid(),
+      account_id: z.string().uuid().optional(),
     },
-    async ({ campaign_id }) => {
+    async ({ campaign_id, account_id }) => {
+      const id = requireAccountId(sessionId, account_id);
+      // Verify campaign ownership before returning stats
+      const campaign = await CampaignService.getById(id, campaign_id);
+      if (!campaign) {
+        return { content: [{ type: "text", text: "Authorization error: Campaign not found or does not belong to account" }], isError: true };
+      }
       const metrics = await AnalyticsService.getCampaignMetrics(campaign_id);
       return { content: [{ type: "text", text: JSON.stringify(metrics, null, 2) }] };
     },
@@ -276,6 +312,7 @@ export function registerTools(server: McpServer): void {
   // Contact Tools
   // ────────────────────────────────────────────
 
+  count++;
   server.tool(
     "enrich_contacts",
     "Trigger batch enrichment of unenriched contacts via Hunter.io",
@@ -284,7 +321,7 @@ export function registerTools(server: McpServer): void {
       account_id: z.string().uuid().optional(),
     },
     async ({ group_id, account_id }) => {
-      const id = requireAccountId(account_id);
+      const id = requireAccountId(sessionId, account_id);
       const hunterKey = process.env.HUNTER_API_KEY;
       if (!hunterKey) return { content: [{ type: "text", text: "Hunter.io API key not configured" }], isError: true };
 
@@ -293,6 +330,7 @@ export function registerTools(server: McpServer): void {
     },
   );
 
+  count++;
   server.tool(
     "export_contacts",
     "Export contacts as CSV",
@@ -301,34 +339,39 @@ export function registerTools(server: McpServer): void {
       account_id: z.string().uuid().optional(),
     },
     async ({ group_id, account_id }) => {
-      const id = requireAccountId(account_id);
+      const id = requireAccountId(sessionId, account_id);
       const csv = await ContactService.exportCSV(id, group_id);
       return { content: [{ type: "text", text: csv }] };
     },
   );
 
+  count++;
   server.tool(
     "push_contact_field",
-    "Set a custom field value on a contact (agent-writable)",
+    "Set a custom field value on a contact (agent-writable, atomic)",
     {
       contact_id: z.string().uuid(),
-      field_name: z.string().min(1).max(64).describe("Custom field name"),
+      field_name: z.string()
+        .min(1)
+        .max(64)
+        .refine(
+          (val) => !DANGEROUS_KEYS.includes(val as typeof DANGEROUS_KEYS[number]),
+          { message: "field_name contains a reserved key that is not allowed" }
+        )
+        .describe("Custom field name"),
       field_value: z.unknown().describe("Value to set"),
       account_id: z.string().uuid().optional(),
     },
     async ({ contact_id, field_name, field_value, account_id }) => {
-      const id = requireAccountId(account_id);
-      const contact = await ContactService.getById(id, contact_id);
-      if (!contact) return { content: [{ type: "text", text: "Contact not found" }], isError: true };
-
-      const customFields = (contact.customFields ?? {}) as Record<string, unknown>;
-      customFields[field_name] = field_value;
-
-      await ContactService.update(id, contact_id, { customFields } as any);
+      const id = requireAccountId(sessionId, account_id);
+      // Atomic DB-level JSON merge — no TOCTOU race
+      const updated = await ContactService.mergeCustomField(id, contact_id, field_name, field_value);
+      if (!updated) return { content: [{ type: "text", text: "Contact not found" }], isError: true };
       return { content: [{ type: "text", text: `Set ${field_name} on contact ${contact_id}` }] };
     },
   );
 
+  count++;
   server.tool(
     "pull_contact_field",
     "Get a custom field value from a contact",
@@ -338,7 +381,7 @@ export function registerTools(server: McpServer): void {
       account_id: z.string().uuid().optional(),
     },
     async ({ contact_id, field_name, account_id }) => {
-      const id = requireAccountId(account_id);
+      const id = requireAccountId(sessionId, account_id);
       const contact = await ContactService.getById(id, contact_id);
       if (!contact) return { content: [{ type: "text", text: "Contact not found" }], isError: true };
 
@@ -348,6 +391,7 @@ export function registerTools(server: McpServer): void {
     },
   );
 
+  count++;
   server.tool(
     "list_contact_groups",
     "List all contact groups for the account",
@@ -355,12 +399,13 @@ export function registerTools(server: McpServer): void {
       account_id: z.string().uuid().optional(),
     },
     async ({ account_id }) => {
-      const id = requireAccountId(account_id);
+      const id = requireAccountId(sessionId, account_id);
       const groups = await ContactService.listGroups(id);
       return { content: [{ type: "text", text: JSON.stringify(groups, null, 2) }] };
     },
   );
 
+  count++;
   server.tool(
     "create_contact_group",
     "Create a new contact group",
@@ -370,20 +415,28 @@ export function registerTools(server: McpServer): void {
       account_id: z.string().uuid().optional(),
     },
     async ({ name, description, account_id }) => {
-      const id = requireAccountId(account_id);
+      const id = requireAccountId(sessionId, account_id);
       const group = await ContactService.createGroup(id, name, description);
       return { content: [{ type: "text", text: JSON.stringify(group, null, 2) }] };
     },
   );
 
+  count++;
   server.tool(
     "add_contacts_to_group",
     "Add contacts to an existing group",
     {
       group_id: z.string().uuid(),
       contact_ids: z.array(z.string().uuid()).min(1),
+      account_id: z.string().uuid().optional(),
     },
-    async ({ group_id, contact_ids }) => {
+    async ({ group_id, contact_ids, account_id }) => {
+      const id = requireAccountId(sessionId, account_id);
+      // Verify group exists and belongs to the account
+      const group = await ContactService.getGroupById(id, group_id);
+      if (!group) {
+        return { content: [{ type: "text", text: "Authorization error: Group not found or does not belong to account" }], isError: true };
+      }
       await ContactService.addToGroup(group_id, contact_ids);
       return { content: [{ type: "text", text: `Added ${contact_ids.length} contacts to group ${group_id}` }] };
     },
@@ -393,6 +446,7 @@ export function registerTools(server: McpServer): void {
   // LinkedIn Tools
   // ────────────────────────────────────────────
 
+  count++;
   server.tool(
     "generate_linkedin_copy",
     "Generate personalized LinkedIn outreach copy for a contact using AI",
@@ -404,7 +458,10 @@ export function registerTools(server: McpServer): void {
       account_id: z.string().uuid().optional(),
     },
     async ({ contact_id, group_id, prompt, research_notes, account_id }) => {
-      const id = requireAccountId(account_id);
+      if (!contact_id && !group_id) {
+        return { content: [{ type: "text", text: "Validation error: At least one of contact_id or group_id must be provided" }], isError: true };
+      }
+      const id = requireAccountId(sessionId, account_id);
       const result = await LinkedInService.generateCopy({
         accountId: id,
         contactId: contact_id,
@@ -416,6 +473,7 @@ export function registerTools(server: McpServer): void {
     },
   );
 
+  count++;
   server.tool(
     "get_linkedin_playbook",
     "Get LinkedIn playbook entries for the account",
@@ -425,7 +483,7 @@ export function registerTools(server: McpServer): void {
       account_id: z.string().uuid().optional(),
     },
     async ({ status, limit, account_id }) => {
-      const id = requireAccountId(account_id);
+      const id = requireAccountId(sessionId, account_id);
       const result = await LinkedInService.list({ accountId: id, status, limit });
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     },
@@ -435,6 +493,7 @@ export function registerTools(server: McpServer): void {
   // Experiment Tools
   // ────────────────────────────────────────────
 
+  count++;
   server.tool(
     "list_ab_experiments",
     "List A/B test experiments for the account",
@@ -442,12 +501,13 @@ export function registerTools(server: McpServer): void {
       account_id: z.string().uuid().optional(),
     },
     async ({ account_id }) => {
-      const id = requireAccountId(account_id);
+      const id = requireAccountId(sessionId, account_id);
       const result = await ExperimentService.list(id);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     },
   );
 
+  count++;
   server.tool(
     "get_experiment_log",
     "Get detailed experiment log with batch results and champion status",
@@ -456,10 +516,12 @@ export function registerTools(server: McpServer): void {
       account_id: z.string().uuid().optional(),
     },
     async ({ experiment_id, account_id }) => {
-      const id = requireAccountId(account_id);
+      const id = requireAccountId(sessionId, account_id);
       const summary = await ExperimentService.getSummary(id, experiment_id);
       const batches = await ExperimentService.getBatches(experiment_id);
       return { content: [{ type: "text", text: JSON.stringify({ summary, batches }, null, 2) }] };
     },
   );
+
+  return count;
 }

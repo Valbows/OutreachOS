@@ -651,3 +651,70 @@ Comprehensive accessibility audit and fixes across all Phase 2 UI components to 
 - Form widget JS (`/widget/{formId}.js`) endpoint not yet implemented — deferred until embed demand confirmed
 - Funnel Builder UI deferred — engine reuses Journey service with different entry conditions
 - A/B Body/CTA test phase deferred — requires champion subject from Phase 4 experiments
+
+---
+
+## Phase 7 — Developer API, Billing & Hardening
+
+> **Note:** Phase 6 was intentionally skipped. The originally planned Advanced Analytics & Reporting phase was deferred to a later release to prioritize Developer API infrastructure and billing hardening, which are prerequisites for customer-facing features and monetization.
+
+### Date: 2026-03-28
+
+### Decisions Made
+
+1. **Developer Dashboard UI** — Two Stitch screens converted: API Keys Management (`/(dashboard)/developer`) with tabs for Keys, Docs, Webhooks, Usage; Usage Analytics (`/(dashboard)/developer/usage`) with time-range selector, endpoint performance table, cost projections, LLM token tracking.
+
+2. **REST API v1** — Full REST API surface at `/api/v1/*` mirroring all MCP tools. Routes for: campaigns (CRUD + status), contacts (CRUD + groups), templates (CRUD), linkedin (playbook list + copy generation). All routes protected by API key auth with scope enforcement.
+
+3. **API Key Authentication** — `lib/api/auth.ts` implements Bearer token validation via SHA-256 hash lookup. Features: rate limiting (100 req/min per key), usage tracking per endpoint, scope enforcement (read/write/admin). Keys generated with `osk_` prefix and stored as hashes.
+
+4. **OpenAPI 3.1 Documentation** — `/api/docs` endpoint returns full OpenAPI spec with all endpoints, schemas, security definitions, and examples. Auto-serves JSON for API documentation tools.
+
+5. **Outbound Webhooks** — `webhooks` and `webhook_deliveries` tables with retry logic (5 retries, exponential backoff). `WebhookService` handles HMAC-SHA256 signing, delivery with timeout, retry scheduling. Events: email.sent/delivered/opened/clicked/bounced, contact.created/updated, campaign.started/completed.
+
+6. **Billing Abstraction** — `billing_plans` and `account_billing` tables with Stripe-ready fields. `BillingService` provides: usage quota checking, metering increment, monthly reset, summary for dashboard. Default free tier limits: 1000 contacts, 500 emails/month, 100K LLM tokens, 50 Hunter credits, 10K API calls.
+
+7. **Security Service** — `SecurityService` with: account security audit (stale keys, privileged access), Resend webhook HMAC validation, LLM input sanitization (injection prevention), field name safety checks (prototype pollution), GDPR data export/deletion. Uses timing-safe comparison for signatures.
+
+8. **UI Component Updates** — Added `outline` and `destructive` variants to Button, `destructive` variant to Badge, `onOpenChange` prop to Modal for compatibility with common patterns.
+
+### Deliverables
+
+| Component | Files | Description |
+|---|---|---|
+| **Developer UI** | `apps/web/src/app/(dashboard)/developer/page.tsx` | API Keys management with BYOK status |
+| **Usage Analytics** | `apps/web/src/app/(dashboard)/developer/usage/page.tsx` | Endpoint performance, cost projections |
+| **API Auth** | `apps/web/src/lib/api/auth.ts` | Bearer token validation, rate limiting, usage tracking |
+| **REST API v1** | `apps/web/src/app/api/v1/*/route.ts` | 6 endpoint groups (campaigns, contacts, groups, templates, linkedin) |
+| **OpenAPI Docs** | `apps/web/src/app/api/docs/route.ts` | OpenAPI 3.1 spec endpoint |
+| **Developer Keys API** | `apps/web/src/app/api/developer/keys/` | Create/list/revoke API keys |
+| **Developer Usage API** | `apps/web/src/app/api/developer/usage/route.ts` | Usage statistics aggregation |
+| **Webhooks API** | `apps/web/src/app/api/developer/webhooks/` | Webhook CRUD endpoints |
+| **WebhookService** | `packages/services/src/webhook-service.ts` | Dispatch, delivery, retry logic, HMAC signing |
+| **BillingService** | `packages/services/src/billing-service.ts` | Quota enforcement, metering, Stripe-ready |
+| **SecurityService** | `packages/services/src/security-service.ts` | Audit, HMAC validation, sanitization, GDPR |
+| **Schema Updates** | `packages/db/src/schema/misc.ts` | webhooks, webhook_deliveries, billing_plans, account_billing tables |
+
+### Test Results
+- **db:** 9 tests passing
+- **services:** 90 tests passing
+- **mcp-server:** 5 tests passing
+- **web:** 137 tests passing
+- **Total:** 241 tests passing across 4 workspaces
+- **Type-check:** All workspaces clean
+
+### Security Hardening Checklist
+- [x] API key hashing with SHA-256
+- [x] Timing-safe signature comparison
+- [x] Rate limiting per API key
+- [x] Scope enforcement (read/write/admin)
+- [x] Prototype pollution protection in field names
+- [x] LLM prompt sanitization
+- [x] HMAC webhook signature validation
+- [x] GDPR data export/deletion endpoints
+- [x] Security audit with stale key detection
+
+### Open Questions
+- Stripe integration requires webhook endpoint for subscription events
+- Webhook delivery worker should run as background job (Vercel Cron or separate worker)
+- Rate limiting uses in-memory store — production should use Redis for distributed rate limiting

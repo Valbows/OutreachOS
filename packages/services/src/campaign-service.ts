@@ -125,11 +125,13 @@ export class CampaignService {
     return updated ?? null;
   }
 
-  /** Delete a campaign */
-  static async delete(accountId: string, campaignId: string) {
-    await db
+  /** Delete a campaign - returns true if deleted, false if not found */
+  static async delete(accountId: string, campaignId: string): Promise<boolean> {
+    const [deleted] = await db
       .delete(campaigns)
-      .where(and(eq(campaigns.id, campaignId), eq(campaigns.accountId, accountId)));
+      .where(and(eq(campaigns.id, campaignId), eq(campaigns.accountId, accountId)))
+      .returning({ id: campaigns.id });
+    return !!deleted;
   }
 
   // === Email Sending ===

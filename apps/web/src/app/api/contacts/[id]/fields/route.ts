@@ -10,13 +10,27 @@ import { getAuthAccount } from "@/lib/auth/session";
 import { ContactService } from "@outreachos/services";
 import { z } from "zod";
 
+const DANGEROUS_KEYS = ["__proto__", "constructor", "prototype"] as const;
+
 const pushFieldSchema = z.object({
-  fieldName: z.string().min(1).max(64),
+  fieldName: z.string()
+    .min(1)
+    .max(64)
+    .refine(
+      (val) => !DANGEROUS_KEYS.includes(val as typeof DANGEROUS_KEYS[number]),
+      { message: "fieldName contains a reserved key that is not allowed" }
+    ),
   fieldValue: z.unknown(),
 });
 
 const deleteFieldSchema = z.object({
-  fieldName: z.string().min(1).max(64),
+  fieldName: z.string()
+    .min(1)
+    .max(64)
+    .refine(
+      (val) => !DANGEROUS_KEYS.includes(val as typeof DANGEROUS_KEYS[number]),
+      { message: "fieldName contains a reserved key that is not allowed" }
+    ),
 });
 
 export async function GET(
@@ -53,14 +67,10 @@ export async function PUT(
       return NextResponse.json({ error: "Invalid input", details: parsed.error.flatten() }, { status: 400 });
     }
 
-    const contact = await ContactService.getById(account.id, id);
-    if (!contact) return NextResponse.json({ error: "Contact not found" }, { status: 404 });
-
-    const customFields = (contact.customFields ?? {}) as Record<string, unknown>;
-    customFields[parsed.data.fieldName] = parsed.data.fieldValue;
-
-    const updated = await ContactService.update(account.id, id, { customFields } as any);
-    return NextResponse.json({ customFields: updated?.customFields ?? customFields });
+    // Atomic DB-level JSON merge — no TOCTOU race
+    const updated = await ContactService.mergeCustomField(account.id, id, parsed.data.fieldName, parsed.data.fieldValue);
+    if (!updated) return NextResponse.json({ error: "Contact not found" }, { status: 404 });
+    return NextResponse.json({ customFields: updated.customFields });
   } catch (err) {
     console.error("Push custom field error:", err instanceof Error ? err.message : err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
@@ -82,14 +92,10 @@ export async function DELETE(
       return NextResponse.json({ error: "Invalid input", details: parsed.error.flatten() }, { status: 400 });
     }
 
-    const contact = await ContactService.getById(account.id, id);
-    if (!contact) return NextResponse.json({ error: "Contact not found" }, { status: 404 });
-
-    const customFields = (contact.customFields ?? {}) as Record<string, unknown>;
-    delete customFields[parsed.data.fieldName];
-
-    await ContactService.update(account.id, id, { customFields } as any);
-    return NextResponse.json({ customFields });
+    // Atomic DB-level field deletion — no TOCTOU race
+    const updated = await ContactService.deleteCustomField(account.id, id, parsed.data.fieldName);
+    if (!updated) return NextResponse.json({ error: "Contact not found" }, { status: 404 });
+    return NextResponse.json({ customFields: updated.customFields });
   } catch (err) {
     console.error("Delete custom field error:", err instanceof Error ? err.message : err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

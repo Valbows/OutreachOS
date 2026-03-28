@@ -12,10 +12,10 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 
 const byokSchema = z.object({
-  gemini: z.string().optional(),
-  openrouter: z.string().optional(),
-  hunter: z.string().optional(),
-  resend: z.string().optional(),
+  gemini: z.string().nullable().optional(),
+  openrouter: z.string().nullable().optional(),
+  hunter: z.string().nullable().optional(),
+  resend: z.string().nullable().optional(),
 });
 
 export async function GET() {
@@ -43,7 +43,13 @@ export async function PUT(req: NextRequest) {
     const account = await getAuthAccount();
     if (!account) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const body = await req.json();
+    let body;
+    try {
+      body = await req.json();
+    } catch (err) {
+      return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    }
+
     const parsed = byokSchema.safeParse(body);
     if (!parsed.success) {
       return NextResponse.json({ error: "Invalid input", details: parsed.error.flatten() }, { status: 400 });
@@ -53,9 +59,11 @@ export async function PUT(req: NextRequest) {
     const existingKeys = account.byokKeys ?? {};
     const newKeys: Record<string, string> = { ...existingKeys };
 
-    // Encrypt each provided key individually
+    // Encrypt each provided key individually, or delete if null/empty
     for (const [provider, rawKey] of Object.entries(parsed.data)) {
-      if (rawKey && rawKey.trim()) {
+      if (rawKey === null || (typeof rawKey === "string" && !rawKey.trim())) {
+        delete newKeys[provider];
+      } else if (rawKey) {
         newKeys[provider] = CryptoService.encrypt(rawKey);
       }
     }

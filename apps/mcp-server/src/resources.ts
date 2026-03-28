@@ -7,11 +7,13 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { db, campaigns, messageInstances, emailEvents, contacts, experiments, experimentBatches, replies } from "@outreachos/db";
 import { eq, and, desc, sql, count, gte } from "drizzle-orm";
 
-export function registerResources(server: McpServer): void {
+export function registerResources(server: McpServer): number {
+  let count = 0;
   // ────────────────────────────────────────────
   // 1. Campaign Performance Summary
   // ────────────────────────────────────────────
 
+  count++;
   server.resource(
     "campaign_performance_summary",
     "outreachos://resources/campaign-performance",
@@ -34,7 +36,7 @@ export function registerResources(server: McpServer): void {
       for (const campaign of activeCampaigns) {
         const [stats] = await db
           .select({
-            total: count(),
+            total: sql<number>`COUNT(*)::int`,
             sent: sql<number>`COUNT(*) FILTER (WHERE ${messageInstances.status} IN ('sent','delivered','opened','clicked'))::int`,
             opened: sql<number>`COUNT(*) FILTER (WHERE ${messageInstances.status} IN ('opened','clicked'))::int`,
             bounced: sql<number>`COUNT(*) FILTER (WHERE ${messageInstances.status} = 'bounced')::int`,
@@ -68,6 +70,7 @@ export function registerResources(server: McpServer): void {
   // 2. Contact Schema
   // ────────────────────────────────────────────
 
+  count++;
   server.resource(
     "contact_schema",
     "outreachos://resources/contact-schema",
@@ -114,6 +117,7 @@ export function registerResources(server: McpServer): void {
   // 3. Recent Replies Summary
   // ────────────────────────────────────────────
 
+  count++;
   server.resource(
     "recent_replies_summary",
     "outreachos://resources/recent-replies",
@@ -170,6 +174,7 @@ export function registerResources(server: McpServer): void {
   // 4. Experiment Status
   // ────────────────────────────────────────────
 
+  count++;
   server.resource(
     "experiment_status",
     "outreachos://resources/experiment-status",
@@ -213,4 +218,6 @@ export function registerResources(server: McpServer): void {
       };
     },
   );
+
+  return count;
 }

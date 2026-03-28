@@ -62,6 +62,12 @@ export class CryptoService {
     const masterKey = CryptoService.getMasterKey();
     const packed = Buffer.from(encryptedBase64, "base64");
 
+    // Validate minimum required length before slicing (salt + iv + tag, ciphertext can be empty)
+    const minLength = SALT_LENGTH + IV_LENGTH + TAG_LENGTH;
+    if (packed.length < minLength) {
+      throw new Error(`Invalid encrypted input: insufficient length (expected at least ${minLength} bytes, got ${packed.length})`);
+    }
+
     const salt = packed.subarray(0, SALT_LENGTH);
     const iv = packed.subarray(SALT_LENGTH, SALT_LENGTH + IV_LENGTH);
     const authTag = packed.subarray(SALT_LENGTH + IV_LENGTH, SALT_LENGTH + IV_LENGTH + TAG_LENGTH);
@@ -95,18 +101,23 @@ export class CryptoService {
 
   /**
    * Decrypt a BYOK key record.
+   * Returns decrypted keys and any errors that occurred during decryption.
    */
-  static decryptKeys(encryptedKeys: Record<string, string>): Record<string, string> {
+  static decryptKeys(encryptedKeys: Record<string, string>): {
+    keys: Record<string, string>;
+    errors: string[];
+  } {
     const decrypted: Record<string, string> = {};
+    const errors: string[] = [];
     for (const [provider, encValue] of Object.entries(encryptedKeys)) {
       if (encValue) {
         try {
           decrypted[provider] = CryptoService.decrypt(encValue);
         } catch {
-          console.error(`Failed to decrypt BYOK key for provider: ${provider}`);
+          errors.push(`Failed to decrypt BYOK key for provider: ${provider}`);
         }
       }
     }
-    return decrypted;
+    return { keys: decrypted, errors };
   }
 }

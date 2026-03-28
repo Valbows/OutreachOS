@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import {
   useLinkedInPlaybook,
   useGenerateLinkedInCopy,
@@ -35,7 +35,7 @@ export default function LinkedInPlaybookPage() {
   const total = data?.total ?? 0;
 
   const stats = {
-    total: total,
+    total: entries.length,
     generated: entries.filter((e) => e.status === "generated").length,
     sent: entries.filter((e) => e.status === "sent").length,
   };
@@ -64,6 +64,16 @@ export default function LinkedInPlaybookPage() {
     }
   }
 
+  // Cleanup timeout on unmount to prevent setState on unmounted component
+  useEffect(() => {
+    return () => {
+      if (copyTimeoutRef.current) {
+        clearTimeout(copyTimeoutRef.current);
+        copyTimeoutRef.current = null;
+      }
+    };
+  }, []);
+
   return (
     <div className="flex gap-6 h-full">
       {/* Main Content */}
@@ -85,15 +95,15 @@ export default function LinkedInPlaybookPage() {
         {/* Stats */}
         <div className="grid grid-cols-3 gap-4 mb-6">
           <div className="rounded-xl bg-[#1f1f25] p-4">
-            <p className="text-xs font-medium text-[#c7c4d8] mb-1">Total Entries</p>
+            <p className="text-xs font-medium text-[#c7c4d8] mb-1">Total (Current page)</p>
             <p className="text-2xl font-bold text-[#41eec2]">{stats.total}</p>
           </div>
           <div className="rounded-xl bg-[#1f1f25] p-4">
-            <p className="text-xs font-medium text-[#c7c4d8] mb-1">Copy Generated</p>
+            <p className="text-xs font-medium text-[#c7c4d8] mb-1">Copy Generated (Current page)</p>
             <p className="text-2xl font-bold text-[#c4c0ff]">{stats.generated}</p>
           </div>
           <div className="rounded-xl bg-[#1f1f25] p-4">
-            <p className="text-xs font-medium text-[#c7c4d8] mb-1">Sent</p>
+            <p className="text-xs font-medium text-[#c7c4d8] mb-1">Sent (Current page)</p>
             <p className="text-2xl font-bold text-[#ffb785]">{stats.sent}</p>
           </div>
         </div>

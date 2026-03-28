@@ -80,7 +80,7 @@ describe("PUT /api/settings/byok", () => {
     expect(res.status).toBe(401);
   });
 
-  it("returns 400 for invalid input", async () => {
+  it("ignores unknown providers and returns 200", async () => {
     const req = createMockRequest("http://localhost:3000/api/settings/byok", {
       method: "PUT",
       body: JSON.stringify({ invalid_provider: 12345 }),

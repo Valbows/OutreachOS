@@ -28,20 +28,10 @@ describe("LLMService", () => {
       ).rejects.toThrow();
     });
 
-    it("maps rate limit errors correctly", async () => {
-      try {
-        await LLMService.generate("test-account", { apiKey: "fake-key", provider: "openrouter" }, "test", "test");
-      } catch (err) {
-        // Any error is expected — we just verify it's a typed LLM error
-        expect(err).toBeInstanceOf(Error);
-        const msg = (err as Error).message;
-        expect(
-          msg.startsWith("LLM_GENERATION_ERROR") ||
-          msg.startsWith("NETWORK_ERROR") ||
-          msg.startsWith("AUTH_ERROR") ||
-          msg.startsWith("RATE_LIMIT_EXCEEDED"),
-        ).toBe(true);
-      }
+    it("throws typed LLM errors", async () => {
+      await expect(
+        LLMService.generate("test-account", { apiKey: "fake-key", provider: "openrouter" }, "test", "test"),
+      ).rejects.toThrow(/AUTH_ERROR|NETWORK_ERROR|LLM_GENERATION_ERROR|RATE_LIMIT_EXCEEDED/);
     });
   });
 });

@@ -11,7 +11,7 @@ export const linkedinPlaybooks = pgTable("linkedin_playbooks", {
   generatedCopy: text("generated_copy"),
   status: text("status").default("draft").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull().$onUpdate(() => new Date()),
 });
 
 export const llmUsageLog = pgTable("llm_usage_log", {
@@ -61,7 +61,7 @@ export const blogPosts = pgTable("blog_posts", {
   ogImage: text("og_image"),
   publishedAt: timestamp("published_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull().$onUpdate(() => new Date()),
 });
 
 export const linkedinPlaybooksRelations = relations(linkedinPlaybooks, ({ one }) => ({
@@ -83,4 +83,80 @@ export const apiUsageRelations = relations(apiUsage, ({ one }) => ({
 
 export const blogPostsRelations = relations(blogPosts, ({ one }) => ({
   account: one(accounts, { fields: [blogPosts.accountId], references: [accounts.id] }),
+}));
+
+export const webhooks = pgTable("webhooks", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  accountId: uuid("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),
+  url: text("url").notNull(),
+  secret: text("secret").notNull(),
+  events: jsonb("events").$type<string[]>().notNull(),
+  enabled: integer("enabled").default(1).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull().$onUpdate(() => new Date()),
+});
+
+export const webhookDeliveries = pgTable("webhook_deliveries", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  webhookId: uuid("webhook_id").notNull().references(() => webhooks.id, { onDelete: "cascade" }),
+  event: text("event").notNull(),
+  payload: jsonb("payload").notNull(),
+  statusCode: integer("status_code"),
+  responseBody: text("response_body"),
+  attempts: integer("attempts").default(0).notNull(),
+  nextRetryAt: timestamp("next_retry_at", { withTimezone: true }),
+  deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const webhooksRelations = relations(webhooks, ({ one, many }) => ({
+  account: one(accounts, { fields: [webhooks.accountId], references: [accounts.id] }),
+  deliveries: many(webhookDeliveries),
+}));
+
+export const webhookDeliveriesRelations = relations(webhookDeliveries, ({ one }) => ({
+  webhook: one(webhooks, { fields: [webhookDeliveries.webhookId], references: [webhooks.id] }),
+}));
+
+export const billingPlans = pgTable("billing_plans", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  name: text("name").notNull(),
+  monthlyPrice: integer("monthly_price").default(0).notNull(),
+  limits: jsonb("limits").$type<{
+    contacts: number;
+    emailsPerMonth: number;
+    llmTokensPerMonth: number;
+    hunterCreditsPerMonth: number;
+    apiCallsPerMonth: number;
+    webhooks: number;
+  }>().notNull(),
+  features: jsonb("features").$type<string[]>(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const accountBilling = pgTable("account_billing", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  accountId: uuid("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }).unique(),
+  planId: uuid("plan_id").references(() => billingPlans.id),
+  stripeCustomerId: text("stripe_customer_id"),
+  stripeSubscriptionId: text("stripe_subscription_id"),
+  currentPeriodStart: timestamp("current_period_start", { withTimezone: true }),
+  currentPeriodEnd: timestamp("current_period_end", { withTimezone: true }),
+  usageThisMonth: jsonb("usage_this_month").$type<{
+    emails: number;
+    llmTokens: number;
+    hunterCredits: number;
+    apiCalls: number;
+  }>().default({ emails: 0, llmTokens: 0, hunterCredits: 0, apiCalls: 0 }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull().$onUpdate(() => new Date()),
+});
+
+export const billingPlansRelations = relations(billingPlans, ({ many }) => ({
+  accounts: many(accountBilling),
+}));
+
+export const accountBillingRelations = relations(accountBilling, ({ one }) => ({
+  account: one(accounts, { fields: [accountBilling.accountId], references: [accounts.id] }),
+  plan: one(billingPlans, { fields: [accountBilling.planId], references: [billingPlans.id] }),
 }));

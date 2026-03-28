@@ -143,7 +143,7 @@ export class LinkedInService {
         status: "generated",
         updatedAt: new Date(),
       })
-      .where(eq(linkedinPlaybooks.id, playbookId))
+      .where(and(eq(linkedinPlaybooks.id, playbookId), eq(linkedinPlaybooks.accountId, accountId)))
       .returning();
 
     return updated;
@@ -210,6 +210,10 @@ export class LinkedInService {
     const result = await db
       .delete(linkedinPlaybooks)
       .where(and(eq(linkedinPlaybooks.id, playbookId), eq(linkedinPlaybooks.accountId, accountId)));
+
+    if (result.rowCount === 0) {
+      throw new Error("PLAYBOOK_NOT_FOUND: LinkedIn playbook entry not found");
+    }
   }
 
   /** Get LLM config for an account, decrypting BYOK keys if present */
@@ -235,19 +239,18 @@ export class LinkedInService {
     let fallbackApiKey: string | undefined;
 
     if (account.byokKeys) {
-      try {
-        const decrypted = CryptoService.decryptKeys(account.byokKeys);
-        if (provider === "gemini" && decrypted.gemini) {
-          apiKey = decrypted.gemini;
-        } else if (provider === "openrouter" && decrypted.openrouter) {
-          apiKey = decrypted.openrouter;
-        }
-        // Set fallback from opposite provider
-        if (decrypted.openrouter && provider === "gemini") {
-          fallbackApiKey = decrypted.openrouter;
-        }
-      } catch {
-        console.error("Failed to decrypt BYOK keys for account, using platform keys");
+      const { keys: decrypted, errors } = CryptoService.decryptKeys(account.byokKeys);
+      if (errors.length > 0) {
+        console.error("Failed to decrypt some BYOK keys for account:", errors.join("; "));
+      }
+      if (provider === "gemini" && decrypted.gemini) {
+        apiKey = decrypted.gemini;
+      } else if (provider === "openrouter" && decrypted.openrouter) {
+        apiKey = decrypted.openrouter;
+      }
+      // Set fallback from opposite provider
+      if (decrypted.openrouter && provider === "gemini") {
+        fallbackApiKey = decrypted.openrouter;
       }
     }
 

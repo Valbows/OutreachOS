@@ -43,7 +43,12 @@ export async function PATCH(
     if (!account) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const { id } = await params;
-    const body = await req.json();
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch (parseErr) {
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
     const parsed = updateSchema.safeParse(body);
     if (!parsed.success) {
       return NextResponse.json({ error: "Invalid input", details: parsed.error.flatten() }, { status: 400 });
@@ -83,7 +88,11 @@ export async function DELETE(
 
     return new NextResponse(null, { status: 204 });
   } catch (err) {
-    console.error("LinkedIn delete error:", err instanceof Error ? err.message : err);
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.startsWith("PLAYBOOK_NOT_FOUND")) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+    console.error("LinkedIn delete error:", message.slice(0, 200));
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

@@ -1,6 +1,6 @@
 import { type HTMLAttributes, forwardRef } from "react";
 
-type BadgeVariant = "default" | "secondary" | "success" | "warning" | "error" | "outline";
+type BadgeVariant = "default" | "secondary" | "success" | "warning" | "error" | "outline" | "destructive";
 
 interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
   variant?: BadgeVariant;
@@ -13,6 +13,7 @@ const variantStyles: Record<BadgeVariant, string> = {
   warning: "bg-tertiary/15 text-tertiary",
   error: "bg-error/15 text-error",
   outline: "border border-outline-variant/30 text-on-surface-variant",
+  destructive: "bg-error text-on-error",
 };
 
 export const Badge = forwardRef<HTMLSpanElement, BadgeProps>(

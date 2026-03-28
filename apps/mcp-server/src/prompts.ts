@@ -6,11 +6,13 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-export function registerPrompts(server: McpServer): void {
+export function registerPrompts(server: McpServer): number {
+  let count = 0;
   // ────────────────────────────────────────────
   // 1. Email Drafting Prompt
   // ────────────────────────────────────────────
 
+  count++;
   server.prompt(
     "email_drafting_prompt",
     "Generate a cold outreach email based on goal, audience, and tone",
@@ -62,6 +64,7 @@ export function registerPrompts(server: McpServer): void {
   // 2. LinkedIn Copy Prompt
   // ────────────────────────────────────────────
 
+  count++;
   server.prompt(
     "linkedin_copy_prompt",
     "Generate personalized LinkedIn outreach message for a contact",
@@ -117,6 +120,7 @@ export function registerPrompts(server: McpServer): void {
   // 3. Follow-up Sequence Prompt
   // ────────────────────────────────────────────
 
+  count++;
   server.prompt(
     "follow_up_sequence_prompt",
     "Generate a multi-step follow-up email sequence for a journey/funnel",
@@ -128,8 +132,10 @@ export function registerPrompts(server: McpServer): void {
       days_between: z.string().optional().describe("Days between each follow-up (default: 3)"),
     },
     ({ initial_email_context, num_follow_ups, tone, objective, days_between }) => {
-      const count = Math.min(parseInt(num_follow_ups) || 2, 4);
-      const gap = parseInt(days_between ?? "3") || 3;
+      const parsedCount = parseInt(num_follow_ups) || 2;
+      const followUpCount = Math.max(1, Math.min(parsedCount, 4));
+      const parsedGap = parseInt(days_between ?? "3") || 3;
+      const gap = Math.max(1, Math.min(parsedGap, 30));
 
       const parts = [
         "You are an expert email sequence strategist working within OutreachOS.",
@@ -139,7 +145,7 @@ export function registerPrompts(server: McpServer): void {
         `**Initial Email Context:** ${initial_email_context}`,
         `**Overall Objective:** ${objective}`,
         `**Tone:** ${tone}`,
-        `**Number of Follow-ups:** ${count}`,
+        `**Number of Follow-ups:** ${followUpCount}`,
         `**Days Between Emails:** ${gap}`,
         "",
         "**Requirements for each follow-up:**",
@@ -168,4 +174,6 @@ export function registerPrompts(server: McpServer): void {
       };
     },
   );
+
+  return count;
 }

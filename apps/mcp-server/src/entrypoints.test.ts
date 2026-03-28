@@ -15,7 +15,7 @@ describe("@outreachos/mcp-server", () => {
 
   it("registers tools without throwing", () => {
     const server = new McpServer({ name: "test", version: "0.0.1" });
-    expect(() => registerTools(server)).not.toThrow();
+    expect(() => registerTools(server, "test-session")).not.toThrow();
   });
 
   it("registers resources without throwing", () => {
@@ -28,10 +28,10 @@ describe("@outreachos/mcp-server", () => {
     expect(() => registerPrompts(server)).not.toThrow();
   });
 
-  it("registers all 21 tools, 4 resources, and 3 prompts together", () => {
+  it("registers all tools, resources, and prompts together", () => {
     const server = new McpServer({ name: "test", version: "0.0.1" });
     expect(() => {
-      registerTools(server);
+      registerTools(server, "test-session");
       registerResources(server);
       registerPrompts(server);
     }).not.toThrow();

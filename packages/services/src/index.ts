@@ -23,3 +23,9 @@ export type { LLMConfig, LLMProvider, RoutingMode, GenerateEmailOptions, Subject
 export { LinkedInService } from "./linkedin-service.js";
 export type { GenerateCopyInput, PlaybookEntry, PlaybookListOptions } from "./linkedin-service.js";
 export { CryptoService } from "./crypto-service.js";
+export { WebhookService } from "./webhook-service.js";
+export type { WebhookEvent as OutboundWebhookEvent, CreateWebhookInput, WebhookPayload } from "./webhook-service.js";
+export { BillingService } from "./billing-service.js";
+export type { UsageLimits, CurrentUsage, UsageType } from "./billing-service.js";
+export { SecurityService } from "./security-service.js";
+export type { SecurityAuditResult } from "./security-service.js";

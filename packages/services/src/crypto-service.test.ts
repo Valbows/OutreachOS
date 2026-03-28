@@ -76,7 +76,8 @@ describe("CryptoService", () => {
       expect(Object.keys(encrypted)).toEqual(["gemini", "openrouter", "hunter"]);
       expect(encrypted.gemini).not.toBe(keys.gemini);
 
-      const decrypted = CryptoService.decryptKeys(encrypted);
+      const { keys: decrypted, errors } = CryptoService.decryptKeys(encrypted);
+      expect(errors).toEqual([]);
       expect(decrypted).toEqual(keys);
     });
 

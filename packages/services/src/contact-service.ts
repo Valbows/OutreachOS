@@ -264,6 +264,53 @@ export class ContactService {
     return updated ?? null;
   }
 
+  /**
+   * Atomically merge a single custom field into contact.customFields (JSONB).
+   * Uses PostgreSQL's jsonb concatenation operator (||) to avoid TOCTOU race.
+   * This is safe for concurrent updates from multiple agents/MCP sessions.
+   */
+  static async mergeCustomField(
+    accountId: string,
+    contactId: string,
+    fieldName: string,
+    fieldValue: unknown,
+  ) {
+    // Build the JSON object to merge: {"fieldName": value}
+    const mergeObject = { [fieldName]: fieldValue };
+
+    const [updated] = await db
+      .update(contacts)
+      .set({
+        customFields: sql`COALESCE(${contacts.customFields}, '{}'::jsonb) || ${JSON.stringify(mergeObject)}::jsonb`,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(contacts.id, contactId), eq(contacts.accountId, accountId)))
+      .returning();
+
+    return updated ?? null;
+  }
+
+  /**
+   * Atomically delete a single custom field from contact.customFields (JSONB).
+   * Uses PostgreSQL's jsonb_delete to avoid TOCTOU race.
+   */
+  static async deleteCustomField(
+    accountId: string,
+    contactId: string,
+    fieldName: string,
+  ) {
+    const [updated] = await db
+      .update(contacts)
+      .set({
+        customFields: sql`${contacts.customFields} - ${fieldName}`,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(contacts.id, contactId), eq(contacts.accountId, accountId)))
+      .returning();
+
+    return updated ?? null;
+  }
+
   /** Delete contacts */
   static async delete(accountId: string, contactIds: string[]): Promise<number> {
     if (contactIds.length === 0) return 0;
@@ -354,6 +401,16 @@ export class ContactService {
       .from(contactGroups)
       .where(eq(contactGroups.accountId, accountId))
       .orderBy(asc(contactGroups.name));
+  }
+
+  /** Get a single group by ID (scoped to account) */
+  static async getGroupById(accountId: string, groupId: string) {
+    const [group] = await db
+      .select()
+      .from(contactGroups)
+      .where(and(eq(contactGroups.id, groupId), eq(contactGroups.accountId, accountId)))
+      .limit(1);
+    return group ?? null;
   }
 
   /** Create a group */

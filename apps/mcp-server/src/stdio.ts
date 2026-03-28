@@ -8,6 +8,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { registerTools } from "./tools.js";
+
+const STDIO_SESSION_ID = "stdio"; // Single session for STDIO transport
 import { registerResources } from "./resources.js";
 import { registerPrompts } from "./prompts.js";
 
@@ -19,14 +21,14 @@ async function main() {
     version: "1.0.0",
   });
 
-  registerTools(server);
-  registerResources(server);
-  registerPrompts(server);
+  const toolCount = registerTools(server, STDIO_SESSION_ID);
+  const resourceCount = registerResources(server);
+  const promptCount = registerPrompts(server);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  console.error("[MCP Server] STDIO transport connected — 21 tools, 4 resources, 3 prompts");
+  console.error(`[MCP Server] STDIO transport connected — ${toolCount} tools, ${resourceCount} resources, ${promptCount} prompts`);
 }
 
 main().catch(console.error);
