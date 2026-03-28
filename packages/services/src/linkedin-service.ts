@@ -1,0 +1,276 @@
+/**
+ * LinkedInService — LinkedIn copy generation, playbook management
+ * Phase 6: LinkedIn Playbook with LLM-powered copy generation
+ */
+
+import { eq, and, desc, count, sql } from "drizzle-orm";
+import { db, linkedinPlaybooks, contacts, contactGroups, contactGroupMembers, accounts } from "@outreachos/db";
+import { LLMService } from "./llm-service.js";
+import type { LLMConfig } from "./llm-service.js";
+import { CryptoService } from "./crypto-service.js";
+
+export interface GenerateCopyInput {
+  accountId: string;
+  contactId?: string;
+  groupId?: string;
+  prompt: string;
+  researchNotes?: string;
+}
+
+export interface PlaybookEntry {
+  id: string;
+  accountId: string;
+  contactId: string | null;
+  groupId: string | null;
+  prompt: string | null;
+  generatedCopy: string | null;
+  status: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface PlaybookListOptions {
+  accountId: string;
+  limit?: number;
+  offset?: number;
+  status?: string;
+}
+
+export class LinkedInService {
+  /** Generate LinkedIn copy for a specific contact */
+  static async generateCopy(input: GenerateCopyInput): Promise<PlaybookEntry> {
+    const llmConfig = await LinkedInService.getLLMConfig(input.accountId);
+
+    let contactInfo: { name: string; company?: string; linkedinUrl?: string } = {
+      name: "Contact",
+    };
+
+    if (input.contactId) {
+      const [contact] = await db
+        .select({
+          firstName: contacts.firstName,
+          lastName: contacts.lastName,
+          companyName: contacts.companyName,
+          linkedinUrl: contacts.linkedinUrl,
+        })
+        .from(contacts)
+        .where(and(eq(contacts.id, input.contactId), eq(contacts.accountId, input.accountId)))
+        .limit(1);
+
+      if (contact) {
+        contactInfo = {
+          name: `${contact.firstName} ${contact.lastName}`,
+          company: contact.companyName ?? undefined,
+          linkedinUrl: contact.linkedinUrl ?? undefined,
+        };
+      }
+    }
+
+    const result = await LLMService.generateLinkedInCopy(
+      input.accountId,
+      llmConfig,
+      contactInfo,
+      input.prompt,
+      input.researchNotes,
+    );
+
+    const [playbook] = await db
+      .insert(linkedinPlaybooks)
+      .values({
+        accountId: input.accountId,
+        contactId: input.contactId ?? null,
+        groupId: input.groupId ?? null,
+        prompt: input.prompt,
+        generatedCopy: result.text,
+        status: "generated",
+      })
+      .returning();
+
+    return playbook;
+  }
+
+  /** Regenerate copy for an existing playbook entry */
+  static async regenerateCopy(accountId: string, playbookId: string): Promise<PlaybookEntry> {
+    const [existing] = await db
+      .select()
+      .from(linkedinPlaybooks)
+      .where(and(eq(linkedinPlaybooks.id, playbookId), eq(linkedinPlaybooks.accountId, accountId)))
+      .limit(1);
+
+    if (!existing) {
+      throw new Error("PLAYBOOK_NOT_FOUND: LinkedIn playbook entry not found");
+    }
+
+    const llmConfig = await LinkedInService.getLLMConfig(accountId);
+
+    let contactInfo: { name: string; company?: string; linkedinUrl?: string } = {
+      name: "Contact",
+    };
+
+    if (existing.contactId) {
+      const [contact] = await db
+        .select({
+          firstName: contacts.firstName,
+          lastName: contacts.lastName,
+          companyName: contacts.companyName,
+          linkedinUrl: contacts.linkedinUrl,
+        })
+        .from(contacts)
+        .where(and(eq(contacts.id, existing.contactId), eq(contacts.accountId, accountId)))
+        .limit(1);
+
+      if (contact) {
+        contactInfo = {
+          name: `${contact.firstName} ${contact.lastName}`,
+          company: contact.companyName ?? undefined,
+          linkedinUrl: contact.linkedinUrl ?? undefined,
+        };
+      }
+    }
+
+    const result = await LLMService.generateLinkedInCopy(
+      accountId,
+      llmConfig,
+      contactInfo,
+      existing.prompt ?? "Generate a professional LinkedIn message",
+      undefined,
+    );
+
+    const [updated] = await db
+      .update(linkedinPlaybooks)
+      .set({
+        generatedCopy: result.text,
+        status: "generated",
+        updatedAt: new Date(),
+      })
+      .where(eq(linkedinPlaybooks.id, playbookId))
+      .returning();
+
+    return updated;
+  }
+
+  /** List playbook entries for an account */
+  static async list(options: PlaybookListOptions): Promise<{ entries: PlaybookEntry[]; total: number }> {
+    const limit = Math.min(options.limit ?? 50, 100);
+    const offset = options.offset ?? 0;
+
+    const conditions = [eq(linkedinPlaybooks.accountId, options.accountId)];
+    if (options.status) {
+      conditions.push(eq(linkedinPlaybooks.status, options.status));
+    }
+
+    const [totalResult] = await db
+      .select({ count: count() })
+      .from(linkedinPlaybooks)
+      .where(and(...conditions));
+
+    const entries = await db
+      .select()
+      .from(linkedinPlaybooks)
+      .where(and(...conditions))
+      .orderBy(desc(linkedinPlaybooks.createdAt))
+      .limit(limit)
+      .offset(offset);
+
+    return { entries, total: totalResult.count };
+  }
+
+  /** Get a single playbook entry */
+  static async getById(accountId: string, playbookId: string): Promise<PlaybookEntry | null> {
+    const [entry] = await db
+      .select()
+      .from(linkedinPlaybooks)
+      .where(and(eq(linkedinPlaybooks.id, playbookId), eq(linkedinPlaybooks.accountId, accountId)))
+      .limit(1);
+
+    return entry ?? null;
+  }
+
+  /** Update playbook status (e.g., mark as "sent") */
+  static async updateStatus(
+    accountId: string,
+    playbookId: string,
+    status: string,
+  ): Promise<PlaybookEntry> {
+    const [updated] = await db
+      .update(linkedinPlaybooks)
+      .set({ status, updatedAt: new Date() })
+      .where(and(eq(linkedinPlaybooks.id, playbookId), eq(linkedinPlaybooks.accountId, accountId)))
+      .returning();
+
+    if (!updated) {
+      throw new Error("PLAYBOOK_NOT_FOUND: LinkedIn playbook entry not found");
+    }
+
+    return updated;
+  }
+
+  /** Delete a playbook entry */
+  static async delete(accountId: string, playbookId: string): Promise<void> {
+    const result = await db
+      .delete(linkedinPlaybooks)
+      .where(and(eq(linkedinPlaybooks.id, playbookId), eq(linkedinPlaybooks.accountId, accountId)));
+  }
+
+  /** Get LLM config for an account, decrypting BYOK keys if present */
+  private static async getLLMConfig(accountId: string): Promise<LLMConfig> {
+    const [account] = await db
+      .select({
+        llmProvider: accounts.llmProvider,
+        llmModel: accounts.llmModel,
+        byokKeys: accounts.byokKeys,
+      })
+      .from(accounts)
+      .where(eq(accounts.id, accountId))
+      .limit(1);
+
+    if (!account) {
+      throw new Error("ACCOUNT_NOT_FOUND: Account not found");
+    }
+
+    const provider = (account.llmProvider ?? "gemini") as "gemini" | "openrouter";
+
+    // Try BYOK keys first, then fall back to platform keys
+    let apiKey: string | undefined;
+    let fallbackApiKey: string | undefined;
+
+    if (account.byokKeys) {
+      try {
+        const decrypted = CryptoService.decryptKeys(account.byokKeys);
+        if (provider === "gemini" && decrypted.gemini) {
+          apiKey = decrypted.gemini;
+        } else if (provider === "openrouter" && decrypted.openrouter) {
+          apiKey = decrypted.openrouter;
+        }
+        // Set fallback from opposite provider
+        if (decrypted.openrouter && provider === "gemini") {
+          fallbackApiKey = decrypted.openrouter;
+        }
+      } catch {
+        console.error("Failed to decrypt BYOK keys for account, using platform keys");
+      }
+    }
+
+    // Fall back to platform environment keys
+    if (!apiKey) {
+      apiKey = provider === "gemini"
+        ? process.env.GEMINI_API_KEY
+        : process.env.OPENROUTER_API_KEY;
+    }
+    if (!fallbackApiKey) {
+      fallbackApiKey = process.env.OPENROUTER_API_KEY;
+    }
+
+    if (!apiKey) {
+      throw new Error(`LLM_KEY_MISSING: No API key configured for provider: ${provider}`);
+    }
+
+    return {
+      apiKey,
+      model: account.llmModel ?? undefined,
+      provider,
+      fallbackApiKey,
+      routingMode: "auto",
+    };
+  }
+}

@@ -1,17 +1,26 @@
 /**
  * LLMService — Gemini 2.5 Pro + OpenRouter routing, prompt construction, usage logging
- * Implemented in Phase 4 (Gemini), Phase 6 (OpenRouter routing)
+ * Phase 4: Gemini primary provider
+ * Phase 6: OpenRouter fallback, routing abstraction, BYOK support
  */
 
 import { GoogleGenAI } from "@google/genai";
 import { db, llmUsageLog } from "@outreachos/db";
 
-const DEFAULT_MODEL = "gemini-2.5-pro-preview-05-06";
+const DEFAULT_GEMINI_MODEL = "gemini-2.5-pro-preview-05-06";
+const DEFAULT_OPENROUTER_MODEL = "google/gemini-2.5-pro-preview";
 const MAX_OUTPUT_TOKENS = 4096;
+const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+
+export type LLMProvider = "gemini" | "openrouter";
+export type RoutingMode = "auto" | "manual";
 
 export interface LLMConfig {
   apiKey: string;
   model?: string;
+  provider?: LLMProvider;
+  fallbackApiKey?: string;
+  routingMode?: RoutingMode;
 }
 
 export interface GenerateEmailOptions {
@@ -91,14 +100,75 @@ export class LLMService {
     return LLMService.generate(accountId, config, prompt, "email_rewrite");
   }
 
-  /** Core generation method — calls Gemini and logs usage */
+  /** Generate LinkedIn copy for outreach */
+  static async generateLinkedInCopy(
+    accountId: string,
+    config: LLMConfig,
+    contactInfo: { name: string; company?: string; linkedinUrl?: string },
+    promptInstructions: string,
+    researchNotes?: string,
+  ): Promise<LLMResponse> {
+    const parts = [
+      "You are an expert LinkedIn outreach copywriter. Generate a personalized LinkedIn connection/message.",
+      "",
+      `Contact: ${contactInfo.name}`,
+    ];
+    if (contactInfo.company) parts.push(`Company: ${contactInfo.company}`);
+    if (contactInfo.linkedinUrl) parts.push(`LinkedIn: ${contactInfo.linkedinUrl}`);
+    parts.push("", "Instructions:", promptInstructions);
+    if (researchNotes) parts.push("", "Research notes:", researchNotes);
+    parts.push(
+      "",
+      "Requirements:",
+      "- Keep it under 300 characters for connection requests, or under 500 words for InMail",
+      "- Be professional but personable",
+      "- Reference something specific about the person or company",
+      "- Include a clear reason for connecting",
+      "",
+      "Return ONLY the message text. No explanation.",
+    );
+
+    return LLMService.generate(accountId, config, parts.join("\n"), "linkedin_copy");
+  }
+
+  /** Core generation method with provider routing and auto-fallback */
   static async generate(
     accountId: string,
     config: LLMConfig,
     prompt: string,
     purpose: string,
   ): Promise<LLMResponse> {
-    const model = config.model ?? DEFAULT_MODEL;
+    const provider = config.provider ?? "gemini";
+    const routingMode = config.routingMode ?? "auto";
+
+    try {
+      if (provider === "openrouter") {
+        return await LLMService.generateViaOpenRouter(accountId, config, prompt, purpose);
+      }
+      return await LLMService.generateViaGemini(accountId, config, prompt, purpose);
+    } catch (err) {
+      // Auto-fallback to OpenRouter if Gemini fails and fallback key available
+      if (provider === "gemini" && routingMode === "auto" && config.fallbackApiKey) {
+        console.warn("Gemini failed, falling back to OpenRouter:", err instanceof Error ? err.message : err);
+        const fallbackConfig: LLMConfig = {
+          ...config,
+          apiKey: config.fallbackApiKey,
+          provider: "openrouter",
+        };
+        return LLMService.generateViaOpenRouter(accountId, fallbackConfig, prompt, purpose);
+      }
+      throw err;
+    }
+  }
+
+  /** Generate via Gemini (Google AI) */
+  private static async generateViaGemini(
+    accountId: string,
+    config: LLMConfig,
+    prompt: string,
+    purpose: string,
+  ): Promise<LLMResponse> {
+    const model = config.model ?? DEFAULT_GEMINI_MODEL;
     const client = new GoogleGenAI({ apiKey: config.apiKey });
 
     const start = Date.now();
@@ -113,19 +183,7 @@ export class LLMService {
         },
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      const lower = message.toLowerCase();
-      // Map common GoogleGenAI errors to typed errors
-      if (lower.includes("429") || lower.includes("rate limit") || lower.includes("ratelimit")) {
-        throw new Error("RATE_LIMIT_EXCEEDED: LLM API rate limit exceeded. Please retry later.");
-      }
-      if (lower.includes("401") || lower.includes("403") || lower.includes("unauthorized") || lower.includes("authentication")) {
-        throw new Error("AUTH_ERROR: LLM API authentication failed. Check your API key.");
-      }
-      if (lower.includes("timeout") || lower.includes("etimedout") || lower.includes("econnreset") || lower.includes("enotfound") || lower.includes("econnrefused")) {
-        throw new Error("NETWORK_ERROR: LLM API network timeout. Please retry.");
-      }
-      throw new Error(`LLM_GENERATION_ERROR: ${message}`);
+      throw LLMService.mapError(err);
     }
 
     const latencyMs = Date.now() - start;
@@ -133,11 +191,75 @@ export class LLMService {
     const inputTokens = response.usageMetadata?.promptTokenCount ?? 0;
     const outputTokens = response.usageMetadata?.candidatesTokenCount ?? 0;
 
-    // Log usage to DB — don't fail the response if logging fails
+    await LLMService.logUsage(accountId, "google", model, purpose, inputTokens, outputTokens, latencyMs);
+
+    return { text, inputTokens, outputTokens, latencyMs };
+  }
+
+  /** Generate via OpenRouter (OpenAI-compatible API) */
+  private static async generateViaOpenRouter(
+    accountId: string,
+    config: LLMConfig,
+    prompt: string,
+    purpose: string,
+  ): Promise<LLMResponse> {
+    const model = config.model ?? DEFAULT_OPENROUTER_MODEL;
+    const start = Date.now();
+
+    let data: {
+      choices?: Array<{ message?: { content?: string } }>;
+      usage?: { prompt_tokens?: number; completion_tokens?: number };
+    };
+    try {
+      const res = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${config.apiKey}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": "https://outreachos.com",
+          "X-Title": "OutreachOS",
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: "user", content: prompt }],
+          max_tokens: MAX_OUTPUT_TOKENS,
+        }),
+      });
+
+      if (!res.ok) {
+        const errBody = await res.text().catch(() => "");
+        throw new Error(`OpenRouter ${res.status}: ${errBody.slice(0, 200)}`);
+      }
+
+      data = await res.json();
+    } catch (err) {
+      throw LLMService.mapError(err);
+    }
+
+    const latencyMs = Date.now() - start;
+    const text = data.choices?.[0]?.message?.content ?? "";
+    const inputTokens = data.usage?.prompt_tokens ?? 0;
+    const outputTokens = data.usage?.completion_tokens ?? 0;
+
+    await LLMService.logUsage(accountId, "openrouter", model, purpose, inputTokens, outputTokens, latencyMs);
+
+    return { text, inputTokens, outputTokens, latencyMs };
+  }
+
+  /** Log LLM usage to DB — never fails the main response */
+  private static async logUsage(
+    accountId: string,
+    provider: string,
+    model: string,
+    purpose: string,
+    inputTokens: number,
+    outputTokens: number,
+    latencyMs: number,
+  ): Promise<void> {
     try {
       await db.insert(llmUsageLog).values({
         accountId,
-        provider: "google",
+        provider,
         model,
         purpose,
         inputTokens,
@@ -147,8 +269,22 @@ export class LLMService {
     } catch (logErr) {
       console.error("Failed to log LLM usage:", logErr);
     }
+  }
 
-    return { text, inputTokens, outputTokens, latencyMs };
+  /** Map provider errors to typed errors */
+  private static mapError(err: unknown): Error {
+    const message = err instanceof Error ? err.message : String(err);
+    const lower = message.toLowerCase();
+    if (lower.includes("429") || lower.includes("rate limit") || lower.includes("ratelimit")) {
+      return new Error("RATE_LIMIT_EXCEEDED: LLM API rate limit exceeded. Please retry later.");
+    }
+    if (lower.includes("401") || lower.includes("403") || lower.includes("unauthorized") || lower.includes("authentication")) {
+      return new Error("AUTH_ERROR: LLM API authentication failed. Check your API key.");
+    }
+    if (lower.includes("timeout") || lower.includes("etimedout") || lower.includes("econnreset") || lower.includes("enotfound") || lower.includes("econnrefused")) {
+      return new Error("NETWORK_ERROR: LLM API network timeout. Please retry.");
+    }
+    return new Error(`LLM_GENERATION_ERROR: ${message}`);
   }
 
   /** Build structured email generation prompt */

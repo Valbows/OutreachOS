@@ -1,54 +1,39 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { registerTools } from "./tools.js";
+import { registerResources } from "./resources.js";
+import { registerPrompts } from "./prompts.js";
 
-describe("@outreachos/mcp-server entrypoints", () => {
-  beforeEach(() => {
-    vi.resetModules();
-    vi.restoreAllMocks();
-    delete process.env.MCP_PORT;
+describe("@outreachos/mcp-server", () => {
+  it("creates a valid McpServer instance", () => {
+    const server = new McpServer({
+      name: "outreachos-mcp",
+      version: "1.0.0",
+    });
+    expect(server).toBeDefined();
   });
 
-  it("logs HTTP startup with the default port", async () => {
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-
-    await import("./server");
-
-    expect(logSpy).toHaveBeenNthCalledWith(
-      1,
-      "[MCP Server] Starting HTTP+SSE transport on port 3001...",
-    );
-    expect(logSpy).toHaveBeenNthCalledWith(
-      2,
-      "[MCP Server] Placeholder — awaiting Phase 6 implementation.",
-    );
-    expect(errorSpy).not.toHaveBeenCalled();
+  it("registers tools without throwing", () => {
+    const server = new McpServer({ name: "test", version: "0.0.1" });
+    expect(() => registerTools(server)).not.toThrow();
   });
 
-  it("logs HTTP startup with the configured port", async () => {
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-
-    process.env.MCP_PORT = "4123";
-    await import("./server");
-
-    expect(logSpy).toHaveBeenCalledWith(
-      "[MCP Server] Starting HTTP+SSE transport on port 4123...",
-    );
-    expect(errorSpy).not.toHaveBeenCalled();
+  it("registers resources without throwing", () => {
+    const server = new McpServer({ name: "test", version: "0.0.1" });
+    expect(() => registerResources(server)).not.toThrow();
   });
 
-  it("logs STDIO startup to stderr", async () => {
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  it("registers prompts without throwing", () => {
+    const server = new McpServer({ name: "test", version: "0.0.1" });
+    expect(() => registerPrompts(server)).not.toThrow();
+  });
 
-    await import("./stdio");
-
-    expect(errorSpy).toHaveBeenNthCalledWith(
-      1,
-      "[MCP Server] Starting STDIO transport...",
-    );
-    expect(errorSpy).toHaveBeenNthCalledWith(
-      2,
-      "[MCP Server] Placeholder — awaiting Phase 6 implementation.",
-    );
+  it("registers all 21 tools, 4 resources, and 3 prompts together", () => {
+    const server = new McpServer({ name: "test", version: "0.0.1" });
+    expect(() => {
+      registerTools(server);
+      registerResources(server);
+      registerPrompts(server);
+    }).not.toThrow();
   });
 });

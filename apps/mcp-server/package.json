@@ -14,10 +14,17 @@
     "start:stdio": "node dist/stdio.js"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.28.0",
     "@outreachos/db": "workspace:*",
-    "@outreachos/services": "workspace:*"
+    "@outreachos/services": "workspace:*",
+    "cors": "^2.8.6",
+    "drizzle-orm": "^0.44.0",
+    "express": "^5.2.1",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
     "@types/node": "^20.0.0",
     "tsup": "^8.0.0",
     "tsx": "^4.0.0",
