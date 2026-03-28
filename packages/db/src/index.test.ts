@@ -142,7 +142,7 @@ describe("@outreachos/db", () => {
           createTableRelationsHelpers(dbModule.campaigns),
         ),
       ),
-    ).toEqual(["account", "template", "steps", "messages"]);
+    ).toEqual(["account", "template", "steps", "messages", "enrollments"]);
     expect(
       Object.keys(
         dbModule.campaignStepsRelations.config(

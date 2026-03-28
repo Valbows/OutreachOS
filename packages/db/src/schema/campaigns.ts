@@ -1,4 +1,5 @@
-import { pgTable, uuid, text, timestamp, integer, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, timestamp, integer, jsonb, boolean, unique } from "drizzle-orm/pg-core";
+import { eq, and, sql, desc, count, lte, isNull, inArray, asc } from "drizzle-orm";
 import { relations } from "drizzle-orm";
 import { accounts } from "./accounts.js";
 
@@ -83,11 +84,36 @@ export const replies = pgTable("replies", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
+export const journeyEnrollments = pgTable(
+  "journey_enrollments",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+    contactId: uuid("contact_id").notNull(),
+    currentStepId: uuid("current_step_id").references(() => campaignSteps.id),
+    status: text("status").default("enrolled").notNull(),
+    // enrolled, initial_sent, first_followup_sent, second_followup_sent, hail_mary_sent, completed, removed
+    removeOnReply: boolean("remove_on_reply").default(true).notNull(),
+    removeOnUnsubscribe: boolean("remove_on_unsubscribe").default(true).notNull(),
+    nextSendAt: timestamp("next_send_at", { withTimezone: true }),
+    processingAt: timestamp("processing_at", { withTimezone: true }), // For row-level locking in cron workers
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    removedAt: timestamp("removed_at", { withTimezone: true }),
+    removeReason: text("remove_reason"), // replied, unsubscribed, manual, completed
+    enrolledAt: timestamp("enrolled_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    unique().on(table.campaignId, table.contactId),
+  ]
+);
+
 export const campaignsRelations = relations(campaigns, ({ one, many }) => ({
   account: one(accounts, { fields: [campaigns.accountId], references: [accounts.id] }),
   template: one(templates, { fields: [campaigns.templateId], references: [templates.id] }),
   steps: many(campaignSteps),
   messages: many(messageInstances),
+  enrollments: many(journeyEnrollments),
 }));
 
 export const campaignStepsRelations = relations(campaignSteps, ({ one }) => ({
@@ -102,4 +128,9 @@ export const messageInstancesRelations = relations(messageInstances, ({ one, man
 
 export const emailEventsRelations = relations(emailEvents, ({ one }) => ({
   messageInstance: one(messageInstances, { fields: [emailEvents.messageInstanceId], references: [messageInstances.id] }),
+}));
+
+export const journeyEnrollmentsRelations = relations(journeyEnrollments, ({ one }) => ({
+  campaign: one(campaigns, { fields: [journeyEnrollments.campaignId], references: [campaigns.id] }),
+  currentStep: one(campaignSteps, { fields: [journeyEnrollments.currentStepId], references: [campaignSteps.id] }),
 }));

@@ -11,6 +11,12 @@ export type { ExperimentType, ExperimentStatus, CreateExperimentInput, BatchResu
 export { AnalyticsService } from "./analytics-service.js";
 export type { CampaignMetrics, HourlyMetric, DailyMetric } from "./analytics-service.js";
 export { InboxService } from "./inbox-service.js";
+export type { ImapConfig, SmtpConfig, ParsedEmail, PollResult } from "./inbox-service.js";
 export { FormService } from "./form-service.js";
+export type { FormType, FormField, CreateFormInput, UpdateFormInput, SubmitFormInput } from "./form-service.js";
+export { JourneyService } from "./journey-service.js";
+export type { JourneyState, CreateJourneyInput, JourneyProgress } from "./journey-service.js";
+export { BlogService } from "./blog-service.js";
+export type { CreateBlogPostInput, UpdateBlogPostInput } from "./blog-service.js";
 export { LLMService } from "./llm-service.js";
 export type { LLMConfig, GenerateEmailOptions, SubjectLineOptions, LLMResponse } from "./llm-service.js";

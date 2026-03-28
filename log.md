@@ -591,3 +591,63 @@ Comprehensive accessibility audit and fixes across all Phase 2 UI components to 
 - Resend webhook secret (`RESEND_WEBHOOK_SECRET`) must be configured for production webhook validation
 - Template editor is HTML-based textarea — rich text editor upgrade deferred to future iteration
 - Experiment batch orchestration (auto-scheduling batches) is manual via API — cron/scheduler deferred
+
+---
+
+## Phase 5 — Journeys, Funnels, Inbox, Forms & SEO
+
+### Date: 2026-03-28
+
+### Decisions Made
+
+1. **JourneyService state machine** — Linear state progression: `enrolled → initial_sent → first_followup_sent → second_followup_sent → hail_mary_sent → completed`. Contacts can also be `removed` (replied, unsubscribed, manual). State transitions happen in `advanceEnrollment()` after each successful send.
+
+2. **journeyEnrollments table** — New schema table added to `campaigns.ts` with `unique(campaignId, contactId)` constraint. Tracks per-contact journey state, current step, next send time, and removal reason. Linked to campaigns and campaign_steps via foreign keys.
+
+3. **Cron-driven journey processing** — `JourneyService.processDueSends()` queries enrollments where `nextSendAt <= now` and processes in batches of 100. Two Vercel Cron endpoints created: `/api/cron/journey-process` (journey sends) and `/api/cron/inbox-poll` (IMAP reply detection). Both validate `CRON_SECRET` bearer token.
+
+4. **InboxService reply detection** — Three-tier matching strategy: (1) `In-Reply-To` header → `resendMessageId`, (2) `References` header fallback, (3) sender email → most recent message instance. `fetchUnseenEmails()` is abstracted for testing — production IMAP implementation deferred until `node-imap` integration.
+
+5. **FormService with 5 pre-built templates** — Minimal, Modal, Inline Banner, Multi-Step Wizard, Side Drawer. Each template has base HTML/CSS stored as constants. Forms support 7 field types: text, email, phone, dropdown, checkbox, textarea, hidden. Embed code generation supports hosted link, iframe, and JS widget methods.
+
+6. **Public form submission endpoint** — `POST /api/forms/submit` is unauthenticated (public-facing). It looks up `accountId` from the form record to create/match contacts. IP address and user agent captured for analytics.
+
+7. **BlogService with newsletter subscriptions** — Markdown-based CMS with `generateStaticParams` for ISR. Newsletter subscribers auto-added to a `newsletter_subscriber` contact group. Public subscribe endpoint at `POST /api/newsletter/subscribe`.
+
+8. **Blog SSR with ISR** — Blog list and post pages use `revalidate = 60` for incremental static regeneration. `generateMetadata` provides OpenGraph tags for SEO. `generateStaticParams` pre-renders published post slugs.
+
+### Deliverables
+
+| Component | Files | Description |
+|---|---|---|
+| **Schema** | `packages/db/src/schema/campaigns.ts` | Added `journeyEnrollments` table + relations |
+| **JourneyService** | `packages/services/src/journey-service.ts` | Journey CRUD, enrollment, cron processing, state machine |
+| **InboxService** | `packages/services/src/inbox-service.ts` | IMAP poll, reply matching, contact reply status updates |
+| **FormService** | `packages/services/src/form-service.ts` | Form CRUD, 5 templates, submissions, embed code generation |
+| **BlogService** | `packages/services/src/blog-service.ts` | Blog CRUD, newsletter subscriptions, tag queries |
+| **Journey API** | `apps/web/src/app/api/journeys/` | CRUD + enrollment routes (3 files) |
+| **Forms API** | `apps/web/src/app/api/forms/` | CRUD + submissions + embed + public submit (5 files) |
+| **Blog API** | `apps/web/src/app/api/blog/` | CRUD + public slug route (2 files) |
+| **Cron API** | `apps/web/src/app/api/cron/` | Journey processing + inbox poll (2 files) |
+| **Newsletter API** | `apps/web/src/app/api/newsletter/subscribe/` | Public subscription endpoint |
+| **Hooks** | `apps/web/src/lib/hooks/use-journeys.ts`, `use-forms.ts` | TanStack Query hooks for journeys & forms |
+| **Journey Builder UI** | `apps/web/src/app/(dashboard)/campaigns/journey/[id]/page.tsx` | Timeline view, progress stats, enrollment |
+| **Forms Dashboard UI** | `apps/web/src/app/(dashboard)/forms/page.tsx` | Form grid with submission counts |
+| **Choose Form Template** | `apps/web/src/app/(dashboard)/forms/new/page.tsx` | 5 template type cards |
+| **Form Editor** | `apps/web/src/app/(dashboard)/forms/[id]/edit/page.tsx` | Fields, design, settings tabs |
+| **Embed Code UI** | `apps/web/src/app/(dashboard)/forms/[id]/embed/page.tsx` | Hosted/iframe/widget code snippets |
+| **Blog List** | `apps/web/src/app/blog/page.tsx` | Public blog listing with ISR |
+| **Blog Post** | `apps/web/src/app/blog/[slug]/page.tsx` | Post page with SEO metadata + static params |
+| **Newsletter Widget** | `apps/web/src/components/features/newsletter-subscribe.tsx` | Embeddable subscribe component |
+
+### Test Results
+- **services:** 77 tests passing (8 files)
+- **web:** 123 tests passing (17 files)
+- **Type-check:** All 3 workspaces clean (db, services, web)
+
+### Open Questions
+- IMAP `fetchUnseenEmails()` returns empty — requires `node-imap` package installation and real IMAP server for production
+- Blog content stored as raw HTML/markdown — need markdown-to-HTML rendering pipeline for production (e.g., `remark` + `rehype`)
+- Form widget JS (`/widget/{formId}.js`) endpoint not yet implemented — deferred until embed demand confirmed
+- Funnel Builder UI deferred — engine reuses Journey service with different entry conditions
+- A/B Body/CTA test phase deferred — requires champion subject from Phase 4 experiments
