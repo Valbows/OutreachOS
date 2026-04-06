@@ -11,6 +11,7 @@ import { z } from "zod";
 
 const generateSchema = z.object({
   contactId: z.string().uuid().optional(),
+  contactIds: z.array(z.string().uuid()).optional(),
   groupId: z.string().uuid().optional(),
   prompt: z.string().min(1).max(2000),
   researchNotes: z.string().max(5000).optional(),
@@ -70,6 +71,55 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "LLM API key not configured" }, { status: 422 });
     }
     console.error("LinkedIn generate error:", message.slice(0, 200));
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+}
+
+/** POST /api/linkedin/batch — batch generate LinkedIn copy for multiple contacts */
+export async function POSTBatch(req: NextRequest) {
+  try {
+    const account = await getAuthAccount();
+    if (!account) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch (parseErr) {
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
+    const parsed = generateSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json({ error: "Invalid input", details: parsed.error.flatten() }, { status: 400 });
+    }
+
+    // If contactIds provided or groupId for batch, use batch generation
+    if (parsed.data.contactIds?.length || parsed.data.groupId) {
+      const result = await LinkedInService.batchGenerateCopy({
+        accountId: account.id,
+        contactIds: parsed.data.contactIds,
+        groupId: parsed.data.groupId,
+        prompt: parsed.data.prompt,
+        researchNotes: parsed.data.researchNotes,
+      });
+      return NextResponse.json(result, { status: 201 });
+    }
+
+    // Single contact generation
+    const result = await LinkedInService.generateCopy({
+      accountId: account.id,
+      contactId: parsed.data.contactId,
+      groupId: parsed.data.groupId,
+      prompt: parsed.data.prompt,
+      researchNotes: parsed.data.researchNotes,
+    });
+
+    return NextResponse.json(result, { status: 201 });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.startsWith("LLM_KEY_MISSING")) {
+      return NextResponse.json({ error: "LLM API key not configured" }, { status: 422 });
+    }
+    console.error("LinkedIn batch generate error:", message.slice(0, 200));
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

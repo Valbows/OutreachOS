@@ -2,7 +2,7 @@
 
 import { useParams, useRouter } from "next/navigation";
 import { useForm as useFormData, useUpdateForm, useDeleteForm } from "@/lib/hooks/use-forms";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 
 interface FormField {
@@ -18,6 +18,256 @@ interface FormField {
 
 const FIELD_TYPES = ["text", "email", "phone", "dropdown", "checkbox", "textarea", "hidden"] as const;
 
+function normalizeFields(nextFields: FormField[] | null | undefined): FormField[] {
+  const fields = nextFields ?? [];
+  // Collect existing numeric IDs to avoid collisions
+  const usedIds = new Set<number>();
+  for (const field of fields) {
+    if (typeof field.id === "number") {
+      usedIds.add(field.id);
+    }
+  }
+  let nextId = Math.max(0, ...usedIds) + 1;
+  return fields.map((field) => {
+    if (typeof field.id === "number") {
+      return field;
+    }
+    // Assign next unused ID
+    while (usedIds.has(nextId)) {
+      nextId++;
+    }
+    usedIds.add(nextId);
+    return { ...field, id: nextId++ };
+  });
+}
+
+function getNextFieldId(nextFields: FormField[]): number {
+  return nextFields.reduce((max, field) => {
+    if (typeof field.id === "number" && field.id > max) {
+      return field.id;
+    }
+    return max;
+  }, 0) + 1;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function sanitizeCssContent(css: string): string {
+  // Prevent breaking out of <style> tag via </style> (case-insensitive)
+  // Replace </style with <\/style to keep CSS valid but prevent tag closure
+  return css.replace(/<\/style/gi, "<\\/style");
+}
+
+function renderFieldPreview(field: FormField): string {
+  const label = escapeHtml(field.label || "Untitled field");
+  const name = escapeHtml(field.name || "field");
+  const placeholder = field.placeholder ? ` placeholder="${escapeHtml(field.placeholder)}"` : "";
+  const required = field.required ? " required" : "";
+  const requiredIndicator = field.required ? " *" : "";
+  const defaultValue = field.defaultValue ? escapeHtml(field.defaultValue) : "";
+
+  if (field.type === "hidden") {
+    return `<input type="hidden" name="${name}" value="${defaultValue}" />`;
+  }
+
+  if (field.type === "textarea") {
+    return `<div class="form-field"><label>${label}${requiredIndicator}</label><textarea name="${name}"${placeholder}${required}>${defaultValue}</textarea></div>`;
+  }
+
+  if (field.type === "dropdown") {
+    const options = (field.options ?? []).length > 0
+      ? (field.options ?? [])
+      : ["Option 1", "Option 2", "Option 3"];
+
+    return `<div class="form-field"><label>${label}${requiredIndicator}</label><select name="${name}"${required}><option value="">Select an option</option>${options
+      .map((option) => `<option value="${escapeHtml(option)}">${escapeHtml(option)}</option>`)
+      .join("")}</select></div>`;
+  }
+
+  if (field.type === "checkbox") {
+    return `<div class="form-field checkbox-field"><label><input type="checkbox" name="${name}"${required}${defaultValue ? " checked" : ""} /> <span>${label}${requiredIndicator}</span></label></div>`;
+  }
+
+  const inputType = field.type === "phone" ? "tel" : field.type;
+  return `<div class="form-field"><label>${label}${requiredIndicator}</label><input type="${inputType}" name="${name}" value="${defaultValue}"${placeholder}${required} /></div>`;
+}
+
+function injectFieldMarkup(template: string, fieldMarkup: string): string {
+  const fallbackTemplate = template.trim() || `<form class="outreachos-form preview"><div class="form-fields"></div><button type="submit">Submit</button></form>`;
+
+  if (/<div class="form-fields">\s*<\/div>/.test(fallbackTemplate)) {
+    return fallbackTemplate.replace(/<div class="form-fields">\s*<\/div>/, `<div class="form-fields">${fieldMarkup}</div>`);
+  }
+
+  if (/<div class="step-content">\s*<\/div>/.test(fallbackTemplate)) {
+    return fallbackTemplate.replace(/<div class="step-content">\s*<\/div>/, `<div class="step-content"><div class="form-fields">${fieldMarkup}</div></div>`);
+  }
+
+  if (fallbackTemplate.includes("</form>")) {
+    return fallbackTemplate.replace("</form>", `${fieldMarkup}</form>`);
+  }
+
+  return `${fallbackTemplate}${fieldMarkup}`;
+}
+
+function buildPreviewDocument({
+  name,
+  fields,
+  htmlContent,
+  cssContent,
+  successMessage,
+  redirectUrl,
+}: {
+  name: string;
+  fields: FormField[];
+  htmlContent: string;
+  cssContent: string;
+  successMessage: string;
+  redirectUrl: string;
+}): string {
+  const fieldMarkup = fields.length > 0
+    ? fields.map((field) => renderFieldPreview(field)).join("")
+    : `<div class="preview-empty">Add fields in the Fields tab to preview this form.</div>`;
+
+  const resolvedHtml = injectFieldMarkup(htmlContent, fieldMarkup);
+  const resolvedSuccessMessage = successMessage || "Thank you for your submission!";
+  const resolvedRedirectUrl = redirectUrl.trim();
+
+  return `<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>${escapeHtml(name || "Form Preview")}</title>
+    <style>
+      :root { color-scheme: light; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: #f8fafc;
+        color: #111827;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      .preview-shell {
+        padding: 24px;
+      }
+      .preview-card {
+        max-width: 720px;
+        margin: 0 auto;
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        border-radius: 16px;
+        box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+        overflow: hidden;
+      }
+      .preview-header {
+        padding: 18px 20px;
+        border-bottom: 1px solid #e5e7eb;
+        background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+      }
+      .preview-header h2 {
+        margin: 0;
+        font-size: 18px;
+        font-weight: 600;
+      }
+      .preview-body {
+        padding: 20px;
+      }
+      .form-field {
+        margin-bottom: 14px;
+      }
+      .form-field label {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 13px;
+        font-weight: 500;
+        color: #374151;
+      }
+      .form-field.checkbox-field label {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .form-field input:not([type="checkbox"]),
+      .form-field textarea,
+      .form-field select {
+        width: 100%;
+        padding: 10px 12px;
+        border: 1px solid #d1d5db;
+        border-radius: 10px;
+        font: inherit;
+        color: #111827;
+        background: #ffffff;
+      }
+      .form-field textarea {
+        min-height: 120px;
+        resize: vertical;
+      }
+      button {
+        cursor: pointer;
+      }
+      .preview-meta {
+        margin-top: 16px;
+        padding-top: 16px;
+        border-top: 1px solid #e5e7eb;
+        display: grid;
+        gap: 10px;
+      }
+      .preview-meta-item {
+        font-size: 12px;
+        color: #6b7280;
+      }
+      .preview-meta-item strong {
+        display: block;
+        margin-bottom: 4px;
+        color: #374151;
+      }
+      .preview-empty {
+        border: 1px dashed #cbd5e1;
+        border-radius: 12px;
+        padding: 18px;
+        font-size: 13px;
+        color: #64748b;
+        background: #f8fafc;
+      }
+      ${sanitizeCssContent(cssContent)}
+    </style>
+  </head>
+  <body>
+    <div class="preview-shell">
+      <div class="preview-card">
+        <div class="preview-header">
+          <h2>${escapeHtml(name || "Untitled Form")}</h2>
+        </div>
+        <div class="preview-body">
+          ${resolvedHtml}
+          <div class="preview-meta">
+            <div class="preview-meta-item">
+              <strong>Success message</strong>
+              <span>${escapeHtml(resolvedSuccessMessage)}</span>
+            </div>
+            ${resolvedRedirectUrl ? `<div class="preview-meta-item"><strong>Redirect URL</strong><span>${escapeHtml(resolvedRedirectUrl)}</span></div>` : ""}
+          </div>
+        </div>
+      </div>
+    </div>
+    <script>
+      document.addEventListener("submit", function(event) {
+        event.preventDefault();
+      });
+    <\/script>
+  </body>
+</html>`;
+}
+
 export default function FormEditorPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -32,11 +282,23 @@ export default function FormEditorPage() {
   const [htmlContent, setHtmlContent] = useState("");
   const [cssContent, setCssContent] = useState("");
   const [activeTab, setActiveTab] = useState<"fields" | "design" | "settings">("fields");
+  const [fieldIdCounter, setFieldIdCounter] = useState(1);
+
+  const previewDocument = useMemo(() => buildPreviewDocument({
+    name,
+    fields,
+    htmlContent,
+    cssContent,
+    successMessage,
+    redirectUrl,
+  }), [name, fields, htmlContent, cssContent, successMessage, redirectUrl]);
 
   useEffect(() => {
     if (form) {
       setName(form.name);
-      setFields((form.fields as FormField[]) ?? []);
+      const normalizedFields = normalizeFields((form.fields as FormField[]) ?? []);
+      setFields(normalizedFields);
+      setFieldIdCounter(getNextFieldId(normalizedFields));
       setSuccessMessage(form.successMessage ?? "");
       setRedirectUrl(form.redirectUrl ?? "");
       setHtmlContent(form.htmlContent ?? "");
@@ -60,9 +322,6 @@ export default function FormEditorPage() {
       // No need to rethrow — TanStack Query tracks error state
     }
   }
-
-  // Unique ID counter for fields (persists across renders)
-  const [fieldIdCounter, setFieldIdCounter] = useState(1);
 
   function addField() {
     const newId = fieldIdCounter;
@@ -252,26 +511,43 @@ export default function FormEditorPage() {
 
       {/* Design tab */}
       {activeTab === "design" && (
-        <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-on-surface mb-2">HTML</label>
-            <textarea
-              value={htmlContent}
-              onChange={(e) => setHtmlContent(e.target.value)}
-              rows={16}
-              className="w-full rounded-lg border border-outline-variant bg-surface px-3 py-2 text-xs font-mono text-on-surface focus:border-primary focus:outline-none resize-none"
-              spellCheck={false}
-            />
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <label className="block text-sm font-medium text-on-surface">Live Preview</label>
+              <span className="text-xs text-on-surface-variant">Updates as you edit the design and fields.</span>
+            </div>
+            <div className="overflow-hidden rounded-xl border border-outline-variant bg-white">
+              <iframe
+                title="Form design preview"
+                srcDoc={previewDocument}
+                className="h-[560px] w-full"
+                sandbox="allow-forms allow-scripts"
+              />
+            </div>
           </div>
-          <div>
-            <label className="block text-sm font-medium text-on-surface mb-2">CSS</label>
-            <textarea
-              value={cssContent}
-              onChange={(e) => setCssContent(e.target.value)}
-              rows={16}
-              className="w-full rounded-lg border border-outline-variant bg-surface px-3 py-2 text-xs font-mono text-on-surface focus:border-primary focus:outline-none resize-none"
-              spellCheck={false}
-            />
+
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            <div>
+              <label className="block text-sm font-medium text-on-surface mb-2">HTML</label>
+              <textarea
+                value={htmlContent}
+                onChange={(e) => setHtmlContent(e.target.value)}
+                rows={16}
+                className="w-full rounded-lg border border-outline-variant bg-surface px-3 py-2 text-xs font-mono text-on-surface focus:border-primary focus:outline-none resize-none"
+                spellCheck={false}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-on-surface mb-2">CSS</label>
+              <textarea
+                value={cssContent}
+                onChange={(e) => setCssContent(e.target.value)}
+                rows={16}
+                className="w-full rounded-lg border border-outline-variant bg-surface px-3 py-2 text-xs font-mono text-on-surface focus:border-primary focus:outline-none resize-none"
+                spellCheck={false}
+              />
+            </div>
           </div>
         </div>
       )}

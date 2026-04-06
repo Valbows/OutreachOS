@@ -31,12 +31,30 @@ const mockUseContacts = vi.fn();
 const mockUseContactGroups = vi.fn();
 const mockUseDeleteContacts = vi.fn();
 const mockUseContact = vi.fn();
+const mockUseContactAnalytics = vi.fn();
+const mockUseReEnrichContact = vi.fn();
+const mockUseUpdateCustomField = vi.fn();
+const mockUseDeleteCustomField = vi.fn();
+const mockUseAddToGroup = vi.fn();
+const mockUseRemoveFromGroup = vi.fn();
+const mockUseCreateGroup = vi.fn();
+const mockUseDeleteGroup = vi.fn();
+const mockUseUpdateGroup = vi.fn();
 
 vi.mock("@/lib/hooks/use-contacts", () => ({
   useContacts: (...args: unknown[]) => mockUseContacts(...args),
   useContactGroups: () => mockUseContactGroups(),
   useDeleteContacts: () => mockUseDeleteContacts(),
   useContact: (id: string) => mockUseContact(id),
+  useContactAnalytics: () => mockUseContactAnalytics(),
+  useReEnrichContact: () => mockUseReEnrichContact(),
+  useUpdateCustomField: () => mockUseUpdateCustomField(),
+  useDeleteCustomField: () => mockUseDeleteCustomField(),
+  useAddToGroup: () => mockUseAddToGroup(),
+  useRemoveFromGroup: () => mockUseRemoveFromGroup(),
+  useCreateGroup: () => mockUseCreateGroup(),
+  useDeleteGroup: () => mockUseDeleteGroup(),
+  useUpdateGroup: () => mockUseUpdateGroup(),
   contactKeys: {
     all: ["contacts"],
     lists: () => ["contacts", "list"],
@@ -53,6 +71,15 @@ beforeEach(() => {
   mockUseContactGroups.mockReturnValue({ data: [] });
   mockUseDeleteContacts.mockReturnValue({ mutate: vi.fn(), isPending: false });
   mockUseContact.mockReturnValue({ data: null, isLoading: false });
+  mockUseContactAnalytics.mockReturnValue({ data: null, isLoading: false });
+  mockUseReEnrichContact.mockReturnValue({ mutate: vi.fn(), isPending: false });
+  mockUseUpdateCustomField.mockReturnValue({ mutate: vi.fn(), isPending: false });
+  mockUseDeleteCustomField.mockReturnValue({ mutate: vi.fn(), isPending: false });
+  mockUseAddToGroup.mockReturnValue({ mutate: vi.fn(), isPending: false });
+  mockUseRemoveFromGroup.mockReturnValue({ mutate: vi.fn(), isPending: false });
+  mockUseCreateGroup.mockReturnValue({ mutate: vi.fn(), isPending: false });
+  mockUseDeleteGroup.mockReturnValue({ mutate: vi.fn(), isPending: false });
+  mockUseUpdateGroup.mockReturnValue({ mutate: vi.fn(), isPending: false });
 });
 
 describe("ContactsPage (List)", () => {
@@ -129,9 +156,10 @@ describe("ContactsPage (List)", () => {
     expect(screen.getByPlaceholderText("Search contacts...")).toBeInTheDocument();
   });
 
-  it("renders group filter dropdown", async () => {
+  it("renders groups sidebar section", async () => {
     await renderList();
-    expect(screen.getByLabelText("Filter by group")).toBeInTheDocument();
+    expect(screen.getByText("Groups")).toBeInTheDocument();
+    expect(screen.getByText("All Contacts")).toBeInTheDocument();
   });
 });
 
@@ -251,6 +279,24 @@ describe("ContactDetailPage", () => {
         customFields: null,
         createdAt: "2024-01-01T00:00:00.000Z",
         updatedAt: "2024-06-01T00:00:00.000Z",
+      },
+      isLoading: false,
+    });
+    mockUseContactAnalytics.mockReturnValue({
+      data: {
+        emailsSent: 10,
+        totalOpens: 5,
+        uniqueOpens: 3,
+        replies: 1,
+        softBounces: 0,
+        hardBounces: 0,
+        complaints: 0,
+        unsubscribes: 0,
+        hourlyOpens: Array.from({ length: 24 }, (_, i) => ({ hour: i, count: 0 })),
+        dailyOpens: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => ({ day: d, count: 0 })),
+        messages: [],
+        activeJourneys: [],
+        replyHistory: [],
       },
       isLoading: false,
     });

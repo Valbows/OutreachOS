@@ -236,14 +236,42 @@ export default function TemplateEditorPage() {
         {/* Preview */}
         {bodyHtml && (
           <div className="border-t border-outline-variant">
-            <details className="px-4 py-2">
-              <summary className="text-xs font-medium text-on-surface-variant cursor-pointer">
-                Preview
+            <details className="px-4 py-2" open>
+              <summary className="text-xs font-medium text-on-surface-variant cursor-pointer flex items-center gap-2">
+                <span>📧</span> Preview
               </summary>
-              <div
-                className="mt-2 rounded-lg border border-outline-variant bg-white p-4 text-sm max-h-48 overflow-auto"
-                dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(bodyHtml) }}
-              />
+              <div className="mt-3 rounded-xl border border-outline-variant bg-gradient-to-b from-slate-50 to-white shadow-lg overflow-hidden">
+                {/* Email Header */}
+                <div className="bg-slate-100 px-5 py-4 border-b border-slate-200">
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center text-primary font-semibold text-sm">
+                      {name?.charAt(0)?.toUpperCase() || "T"}
+                    </div>
+                    <div className="flex-1">
+                      <div className="text-sm font-medium text-slate-800">Your Company</div>
+                      <div className="text-xs text-slate-500">to: {"{recipient}"}</div>
+                    </div>
+                    <div className="text-xs text-slate-400">Just now</div>
+                  </div>
+                  <div className="text-base font-semibold text-slate-900">
+                    {subject || "No subject"}
+                  </div>
+                </div>
+                {/* Email Body */}
+                <div
+                  className="px-5 py-5 text-sm text-slate-700 leading-relaxed max-h-64 overflow-auto prose prose-sm prose-slate max-w-none"
+                  dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(bodyHtml) }}
+                />
+                {/* Email Footer */}
+                <div className="bg-slate-50 px-5 py-3 border-t border-slate-200">
+                  <div className="flex items-center gap-4 text-xs text-slate-400">
+                    <button className="hover:text-primary transition-colors">↩ Reply</button>
+                    <button className="hover:text-primary transition-colors">↪ Forward</button>
+                    <span className="flex-1" />
+                    <span>Sent via OutreachOS</span>
+                  </div>
+                </div>
+              </div>
             </details>
           </div>
         )}
@@ -293,7 +321,7 @@ export default function TemplateEditorPage() {
 
           <div className="px-4 py-3 border-t border-outline-variant">
             <div className="text-[10px] text-on-surface-variant">
-              Powered by Gemini 2.5 Pro
+              Powered by Gemini 2.5 Flash
             </div>
           </div>
         </div>

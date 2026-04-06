@@ -13,6 +13,15 @@ export async function POST(request: NextRequest) {
 
     const formData = await request.formData();
     const file = formData.get("file") as File | null;
+    const mappingJson = formData.get("mapping") as string | null;
+    let userMapping: Record<string, string> | undefined;
+    if (mappingJson) {
+      try {
+        userMapping = JSON.parse(mappingJson);
+      } catch {
+        // Ignore invalid mapping, will use auto-mapping
+      }
+    }
 
     if (!file) {
       return NextResponse.json(
@@ -42,7 +51,11 @@ export async function POST(request: NextRequest) {
     if (fileName.endsWith(".csv")) {
       const text = await file.text();
       try {
-        rows = ContactService.parseCSV(text);
+        if (userMapping && Object.keys(userMapping).length > 0) {
+          rows = ContactService.parseCSVWithMapping(text, userMapping);
+        } else {
+          rows = ContactService.parseCSV(text);
+        }
       } catch (err) {
         return NextResponse.json(
           { error: err instanceof Error ? err.message : "Failed to parse CSV" },
@@ -68,7 +81,11 @@ export async function POST(request: NextRequest) {
       }
       const csvContent = XLSX.utils.sheet_to_csv(workbook.Sheets[sheetName]);
       try {
-        rows = ContactService.parseCSV(csvContent);
+        if (userMapping && Object.keys(userMapping).length > 0) {
+          rows = ContactService.parseCSVWithMapping(csvContent, userMapping);
+        } else {
+          rows = ContactService.parseCSV(csvContent);
+        }
       } catch (err) {
         return NextResponse.json(
           { error: err instanceof Error ? err.message : "Failed to parse Excel file" },

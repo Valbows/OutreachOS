@@ -9,6 +9,22 @@ import { LLMService } from "./llm-service.js";
 import type { LLMConfig } from "./llm-service.js";
 import { CryptoService } from "./crypto-service.js";
 
+export interface BatchGenerateInput {
+  accountId: string;
+  contactIds?: string[];
+  groupId?: string;
+  prompt: string;
+  researchNotes?: string;
+}
+
+export interface BatchGenerateResult {
+  entries: PlaybookEntry[];
+  errors: { contactId?: string; error: string }[];
+  total: number;
+  successCount: number;
+  errorCount: number;
+}
+
 export interface GenerateCopyInput {
   accountId: string;
   contactId?: string;
@@ -37,6 +53,104 @@ export interface PlaybookListOptions {
 }
 
 export class LinkedInService {
+  /** Generate LinkedIn copy for multiple contacts (batch generation) */
+  static async batchGenerateCopy(input: BatchGenerateInput): Promise<BatchGenerateResult> {
+    const llmConfig = await LinkedInService.getLLMConfig(input.accountId);
+    
+    let targetContactIds: string[] = [];
+    
+    if (input.contactIds && input.contactIds.length > 0) {
+      targetContactIds = input.contactIds;
+    } else if (input.groupId) {
+      // Get all contacts from the group
+      const members = await db
+        .select({ contactId: contactGroupMembers.contactId })
+        .from(contactGroupMembers)
+        .where(eq(contactGroupMembers.groupId, input.groupId));
+      targetContactIds = members.map(m => m.contactId);
+    }
+    
+    if (targetContactIds.length === 0) {
+      return {
+        entries: [],
+        errors: [{ error: "No contacts selected" }],
+        total: 0,
+        successCount: 0,
+        errorCount: 1,
+      };
+    }
+    
+    // Limit batch size to prevent overwhelming the system
+    const MAX_BATCH_SIZE = 50;
+    if (targetContactIds.length > MAX_BATCH_SIZE) {
+      targetContactIds = targetContactIds.slice(0, MAX_BATCH_SIZE);
+    }
+    
+    // Fetch all contacts in one query
+    const contactsData = await db
+      .select({
+        id: contacts.id,
+        firstName: contacts.firstName,
+        lastName: contacts.lastName,
+        companyName: contacts.companyName,
+        linkedinUrl: contacts.linkedinUrl,
+      })
+      .from(contacts)
+      .where(and(
+        eq(contacts.accountId, input.accountId),
+        sql`${contacts.id} IN (${sql.join(targetContactIds.map(id => sql`${id}`), sql`, `)})`
+      ));
+    
+    const entries: PlaybookEntry[] = [];
+    const errors: { contactId?: string; error: string }[] = [];
+    
+    // Generate copy for each contact sequentially to avoid rate limits
+    for (const contact of contactsData) {
+      try {
+        const contactInfo = {
+          name: `${contact.firstName} ${contact.lastName}`,
+          company: contact.companyName ?? undefined,
+          linkedinUrl: contact.linkedinUrl ?? undefined,
+        };
+        
+        const result = await LLMService.generateLinkedInCopy(
+          input.accountId,
+          llmConfig,
+          contactInfo,
+          input.prompt,
+          input.researchNotes,
+        );
+        
+        const [playbook] = await db
+          .insert(linkedinPlaybooks)
+          .values({
+            accountId: input.accountId,
+            contactId: contact.id,
+            groupId: input.groupId ?? null,
+            prompt: input.prompt,
+            generatedCopy: result.text,
+            status: "generated",
+          })
+          .returning();
+        
+        entries.push(playbook);
+      } catch (err) {
+        errors.push({
+          contactId: contact.id,
+          error: err instanceof Error ? err.message : "Generation failed",
+        });
+      }
+    }
+    
+    return {
+      entries,
+      errors,
+      total: targetContactIds.length,
+      successCount: entries.length,
+      errorCount: errors.length,
+    };
+  }
+
   /** Generate LinkedIn copy for a specific contact */
   static async generateCopy(input: GenerateCopyInput): Promise<PlaybookEntry> {
     const llmConfig = await LinkedInService.getLLMConfig(input.accountId);

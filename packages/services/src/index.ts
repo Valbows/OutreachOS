@@ -21,7 +21,7 @@ export type { CreateBlogPostInput, UpdateBlogPostInput } from "./blog-service.js
 export { LLMService } from "./llm-service.js";
 export type { LLMConfig, LLMProvider, RoutingMode, GenerateEmailOptions, SubjectLineOptions, LLMResponse } from "./llm-service.js";
 export { LinkedInService } from "./linkedin-service.js";
-export type { GenerateCopyInput, PlaybookEntry, PlaybookListOptions } from "./linkedin-service.js";
+export type { GenerateCopyInput, PlaybookEntry, PlaybookListOptions, BatchGenerateInput, BatchGenerateResult } from "./linkedin-service.js";
 export { CryptoService } from "./crypto-service.js";
 export { WebhookService } from "./webhook-service.js";
 export type { WebhookEvent as OutboundWebhookEvent, CreateWebhookInput, WebhookPayload } from "./webhook-service.js";

@@ -27,6 +27,7 @@ export interface EnrichmentResult {
   sources?: string[];
   linkedinUrl?: string;
   error?: string;
+  errorCode?: "NOT_FOUND" | "NO_DOMAIN" | "NO_EMAIL" | "LOW_CONFIDENCE" | "INVALID_STATUS" | "ENRICHMENT_FAILED";
 }
 
 export interface BatchProgress {
@@ -79,7 +80,7 @@ export class EnrichmentService {
       );
 
       if (!finderData.data.email) {
-        return { contactId, error: "No email found" };
+        return { contactId, error: "No email found", errorCode: "NO_EMAIL" };
       }
 
       const score = finderData.data.score;
@@ -91,6 +92,7 @@ export class EnrichmentService {
           email: finderData.data.email,
           score,
           error: `Score ${score} below threshold ${threshold}`,
+          errorCode: "LOW_CONFIDENCE",
         };
       }
 
@@ -110,6 +112,7 @@ export class EnrichmentService {
           score,
           status: verifiedStatus,
           error: `Status "${verifiedStatus}" not in accepted set`,
+          errorCode: "INVALID_STATUS",
         };
       }
 
@@ -127,6 +130,7 @@ export class EnrichmentService {
       return {
         contactId,
         error: err instanceof Error ? err.message : "Enrichment failed",
+        errorCode: "ENRICHMENT_FAILED",
       };
     }
   }
@@ -247,12 +251,12 @@ export class EnrichmentService {
   ): Promise<EnrichmentResult> {
     const contact = await ContactService.getById(accountId, contactId);
     if (!contact) {
-      return { contactId, error: "Contact not found" };
+      return { contactId, error: "Contact not found", errorCode: "NOT_FOUND" };
     }
 
     const domain = EnrichmentService.extractDomain(contact.businessWebsite);
     if (!domain) {
-      return { contactId, error: "No business website to derive domain" };
+      return { contactId, error: "No business website to derive domain", errorCode: "NO_DOMAIN" };
     }
 
     const result = await EnrichmentService.enrichContact(
@@ -268,6 +272,84 @@ export class EnrichmentService {
     }
 
     return result;
+  }
+
+  /**
+   * Re-enrich all contacts in a group (including already enriched ones).
+   * Useful for refreshing stale data.
+   */
+  static async reEnrichGroup(
+    accountId: string,
+    groupId: string,
+    config: EnrichmentConfig,
+    onProgress?: (progress: BatchProgress) => void,
+  ): Promise<BatchProgress> {
+    const progress: BatchProgress = {
+      processed: 0,
+      total: 0,
+      found: 0,
+      verified: 0,
+    };
+
+    let offset = 0;
+    let hasMore = true;
+
+    while (hasMore) {
+      // Get ALL contacts in the group (not just unenriched)
+      const chunk = await ContactService.listByGroup(accountId, groupId, {
+        limit: ENRICHMENT_CHUNK_SIZE,
+        offset,
+      });
+
+      if (chunk.length === 0) {
+        hasMore = false;
+        break;
+      }
+
+      if (chunk.length < ENRICHMENT_CHUNK_SIZE) {
+        progress.total = progress.processed + chunk.length;
+        hasMore = false;
+      } else {
+        progress.total = progress.processed + chunk.length + ENRICHMENT_CHUNK_SIZE;
+      }
+
+      for (const contact of chunk) {
+        const domain = EnrichmentService.extractDomain(contact.businessWebsite);
+
+        if (!domain) {
+          progress.processed++;
+          onProgress?.(progress);
+          continue;
+        }
+
+        const result = await EnrichmentService.enrichContact(
+          contact.id,
+          contact.firstName,
+          contact.lastName,
+          domain,
+          config,
+        );
+
+        await EnrichmentService.persistEnrichment(accountId, contact.id, result);
+        if (result.email || result.linkedinUrl) {
+          progress.found++;
+          if (result.status && VALID_STATUSES.has(result.status)) {
+            progress.verified++;
+          }
+        }
+
+        progress.processed++;
+        onProgress?.(progress);
+
+        // Throttle: ~150ms between requests for safety
+        await EnrichmentService.delay(150);
+      }
+
+      offset += chunk.length;
+    }
+
+    progress.total = progress.processed;
+    return progress;
   }
 
   // === Hunter.io API Calls with Retry ===

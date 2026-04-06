@@ -1,6 +1,10 @@
-import { neon } from "@neondatabase/serverless";
-import { drizzle } from "drizzle-orm/neon-http";
+import { Pool, neonConfig } from "@neondatabase/serverless";
+import { drizzle } from "drizzle-orm/neon-serverless";
 import * as schema from "./schema/index.js";
+import ws from "ws";
+
+// Enable WebSocket support in Node.js (required for transactions)
+neonConfig.webSocketConstructor = ws;
 
 type DB = ReturnType<typeof drizzle<typeof schema>>;
 
@@ -9,6 +13,7 @@ let _db: DB | null = null;
 /**
  * Lazy singleton — deferred so Next.js build doesn't crash when DATABASE_URL
  * is absent at static-analysis time. The connection is created on first access.
+ * Uses Pool (WebSocket) instead of neon() (HTTP) to support db.transaction().
  */
 export function getDb(): DB {
   if (!_db) {
@@ -16,8 +21,8 @@ export function getDb(): DB {
     if (!databaseUrl) {
       throw new Error("DATABASE_URL environment variable is required but not set.");
     }
-    const sql = neon(databaseUrl);
-    _db = drizzle({ client: sql, schema });
+    const pool = new Pool({ connectionString: databaseUrl });
+    _db = drizzle({ client: pool, schema });
   }
   return _db;
 }

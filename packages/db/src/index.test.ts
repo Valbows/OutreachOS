@@ -3,7 +3,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const ORIGINAL_DATABASE_URL = process.env.DATABASE_URL;
 
-const neonMock = vi.fn(() => "sql-client");
+const poolConstructorMock = vi.fn();
+const wsMock = { name: "ws-mock" };
+const neonConfigMock: { webSocketConstructor?: unknown } = {};
+class PoolMock {
+  options: unknown;
+
+  constructor(options: unknown) {
+    this.options = options;
+    poolConstructorMock(options);
+  }
+}
 const drizzleMock = vi.fn(
   ({ client, schema }: { client: unknown; schema: unknown }) => ({
     client,
@@ -12,11 +22,16 @@ const drizzleMock = vi.fn(
 );
 
 vi.mock("@neondatabase/serverless", () => ({
-  neon: neonMock,
+  Pool: PoolMock,
+  neonConfig: neonConfigMock,
 }));
 
-vi.mock("drizzle-orm/neon-http", () => ({
+vi.mock("drizzle-orm/neon-serverless", () => ({
   drizzle: drizzleMock,
+}));
+
+vi.mock("ws", () => ({
+  default: wsMock,
 }));
 
 describe("@outreachos/db", () => {
@@ -48,12 +63,13 @@ describe("@outreachos/db", () => {
     }
   });
 
-  it("creates drizzle client with neon and correct database URL", () => {
-    expect(neonMock).toHaveBeenCalledWith(
-      "postgres://outreachos:test@localhost:5432/outreachos",
-    );
+  it("creates drizzle client with Pool and correct database URL", () => {
+    expect(poolConstructorMock).toHaveBeenCalledWith({
+      connectionString: "postgres://outreachos:test@localhost:5432/outreachos",
+    });
     expect(drizzleMock).toHaveBeenCalledTimes(1);
-    expect(database.client).toBe("sql-client");
+    expect(neonConfigMock.webSocketConstructor).toBe(wsMock);
+    expect(database.client).toBeInstanceOf(PoolMock);
     expect(database.schema.accounts).toBe(dbModule.accounts);
   });
 

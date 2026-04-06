@@ -273,6 +273,24 @@ function ProfileSection() {
 
 /* --- Inbox Connection Section --- */
 function InboxSection() {
+  const [oauthPending, setOauthPending] = useState(false);
+  const [oauthError, setOauthError] = useState<string | null>(null);
+
+  async function handleGoogleConnect() {
+    setOauthPending(true);
+    setOauthError(null);
+    try {
+      const { error } = await authClient.signIn.social({ provider: "google" });
+      if (error) {
+        setOauthError("Failed to connect Google account. Please try again.");
+        setOauthPending(false);
+      }
+    } catch (error) {
+      setOauthError("Failed to connect Google account. Please try again.");
+      setOauthPending(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       {/* IMAP/SMTP Config */}
@@ -315,9 +333,14 @@ function InboxSection() {
           <p className="text-sm text-on-surface-variant mb-4">
             Connect your Google Workspace or Personal Gmail via OAuth 2.0.
           </p>
-          <Button variant="secondary">
+          {oauthError && (
+            <div className="mb-4 px-4 py-3 bg-error-container/20 border border-error/20 rounded-[var(--radius-input)] text-sm text-error">
+              {oauthError}
+            </div>
+          )}
+          <Button variant="secondary" onClick={handleGoogleConnect} disabled={oauthPending}>
             <GoogleIcon />
-            Connect Google Account
+            {oauthPending ? "Connecting..." : "Connect Google Account"}
           </Button>
         </CardContent>
       </Card>

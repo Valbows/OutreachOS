@@ -7,8 +7,8 @@
 import { GoogleGenAI } from "@google/genai";
 import { db, llmUsageLog } from "@outreachos/db";
 
-const DEFAULT_GEMINI_MODEL = "gemini-2.5-pro-preview-05-06";
-const DEFAULT_OPENROUTER_MODEL = "google/gemini-2.5-pro-preview";
+const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
+const DEFAULT_OPENROUTER_MODEL = "google/gemini-2.5-flash";
 const MAX_OUTPUT_TOKENS = 4096;
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 

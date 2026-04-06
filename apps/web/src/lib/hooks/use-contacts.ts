@@ -224,3 +224,274 @@ export function useCreateGroup() {
     },
   });
 }
+
+/** Update a contact group */
+export function useUpdateGroup() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      id,
+      ...input
+    }: {
+      id: string;
+      name?: string;
+      description?: string;
+    }) => {
+      const res = await fetch(`/api/contacts/groups/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to update group");
+      }
+      return res.json() as Promise<ContactGroup>;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: contactKeys.groups() });
+      queryClient.setQueryData(contactKeys.groups(), (old: ContactGroup[] | undefined) => {
+        if (!old) return [data];
+        return old.map((g) => (g.id === data.id ? data : g));
+      });
+    },
+  });
+}
+
+/** Delete a contact group */
+export function useDeleteGroup() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const res = await fetch(`/api/contacts/groups/${id}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to delete group");
+      }
+      return res.json() as Promise<{ success: boolean }>;
+    },
+    onSuccess: (_, id) => {
+      queryClient.invalidateQueries({ queryKey: contactKeys.groups() });
+      queryClient.invalidateQueries({ queryKey: contactKeys.lists() });
+      // Remove from cache
+      queryClient.setQueryData(contactKeys.groups(), (old: ContactGroup[] | undefined) => {
+        if (!old) return [];
+        return old.filter((g) => g.id !== id);
+      });
+    },
+  });
+}
+
+/** Add contacts to a group */
+export function useAddToGroup() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      groupId,
+      contactIds,
+    }: {
+      groupId: string;
+      contactIds: string[];
+    }) => {
+      const res = await fetch(`/api/contacts/groups/${groupId}/members`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contactIds }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to add contacts to group");
+      }
+      return res.json() as Promise<{ success: boolean; added: number }>;
+    },
+    onSuccess: (_, { groupId }) => {
+      queryClient.invalidateQueries({ queryKey: contactKeys.groups() });
+      queryClient.invalidateQueries({ queryKey: contactKeys.lists() });
+      // Invalidate group-specific queries
+      queryClient.invalidateQueries({
+        queryKey: contactKeys.list({ groupId }),
+      });
+    },
+  });
+}
+
+/** Remove contacts from a group */
+export function useRemoveFromGroup() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      groupId,
+      contactIds,
+    }: {
+      groupId: string;
+      contactIds: string[];
+    }) => {
+      const res = await fetch(`/api/contacts/groups/${groupId}/members/remove`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contactIds }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to remove contacts from group");
+      }
+      return res.json() as Promise<{ success: boolean; removed: number }>;
+    },
+    onSuccess: (_, { groupId }) => {
+      queryClient.invalidateQueries({ queryKey: contactKeys.groups() });
+      queryClient.invalidateQueries({ queryKey: contactKeys.lists() });
+      // Invalidate group-specific queries
+      queryClient.invalidateQueries({
+        queryKey: contactKeys.list({ groupId }),
+      });
+    },
+  });
+}
+
+// === Analytics Types ===
+
+export interface ContactAnalytics {
+  emailsSent: number;
+  totalOpens: number;
+  uniqueOpens: number;
+  replies: number;
+  softBounces: number;
+  hardBounces: number;
+  complaints: number;
+  unsubscribes: number;
+  hourlyOpens: { hour: number; count: number }[];
+  dailyOpens: { day: string; count: number }[];
+  messages: {
+    id: string;
+    subject: string | null;
+    sentAt: string | null;
+    openCount: number;
+    firstOpenedAt: string | null;
+    lastOpenedAt: string | null;
+    status: string;
+  }[];
+  activeJourneys: {
+    id: string;
+    campaignId: string;
+    campaignName: string;
+    status: string;
+    enrolledAt: string;
+  }[];
+  replyHistory: {
+    id: string;
+    subject: string | null;
+    bodyPreview: string | null;
+    receivedAt: string;
+  }[];
+}
+
+/** Fetch contact analytics */
+export function useContactAnalytics(contactId: string) {
+  return useQuery({
+    queryKey: [...contactKeys.detail(contactId), "analytics"],
+    queryFn: async () => {
+      const res = await fetch(`/api/contacts/${contactId}/analytics`);
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to fetch analytics");
+      }
+      return res.json() as Promise<ContactAnalytics>;
+    },
+    enabled: !!contactId,
+  });
+}
+
+/** Re-enrich a single contact */
+export function useReEnrichContact() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (contactId: string) => {
+      const res = await fetch(`/api/contacts/${contactId}/enrich`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to re-enrich contact");
+      }
+      return res.json() as Promise<{
+        success: boolean;
+        contactId: string;
+        email?: string;
+        score?: number;
+        status?: string;
+        linkedinUrl?: string;
+        error?: string;
+      }>;
+    },
+    onSuccess: (_, contactId) => {
+      queryClient.invalidateQueries({ queryKey: contactKeys.detail(contactId) });
+      queryClient.invalidateQueries({ queryKey: contactKeys.lists() });
+    },
+  });
+}
+
+/** Update a custom field on a contact */
+export function useUpdateCustomField() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      contactId,
+      fieldName,
+      fieldValue,
+    }: {
+      contactId: string;
+      fieldName: string;
+      fieldValue: unknown;
+    }) => {
+      const res = await fetch(`/api/contacts/${contactId}/fields`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fieldName, fieldValue }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to update custom field");
+      }
+      return res.json() as Promise<{ customFields: Record<string, unknown> }>;
+    },
+    onSuccess: (_, { contactId }) => {
+      queryClient.invalidateQueries({ queryKey: contactKeys.detail(contactId) });
+    },
+  });
+}
+
+/** Delete a custom field from a contact */
+export function useDeleteCustomField() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      contactId,
+      fieldName,
+    }: {
+      contactId: string;
+      fieldName: string;
+    }) => {
+      const params = new URLSearchParams({ fieldName });
+      const res = await fetch(`/api/contacts/${contactId}/fields?${params.toString()}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to delete custom field");
+      }
+      return res.json() as Promise<{ customFields: Record<string, unknown> }>;
+    },
+    onSuccess: (_, { contactId }) => {
+      queryClient.invalidateQueries({ queryKey: contactKeys.detail(contactId) });
+    },
+  });
+}

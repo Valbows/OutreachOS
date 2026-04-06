@@ -47,3 +47,19 @@ export function AiIcon({ width = 20, height = 20, className = "text-secondary" }
     </svg>
   );
 }
+
+export function ArrowLeftIcon({ width = 16, height = 16, className = "text-on-surface" }: IconProps) {
+  return (
+    <svg width={width} height={height} viewBox="0 0 24 24" fill="none" aria-hidden="true" className={className}>
+      <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" fill="currentColor" />
+    </svg>
+  );
+}
+
+export function ArrowRightIcon({ width = 16, height = 16, className = "text-on-surface" }: IconProps) {
+  return (
+    <svg width={width} height={height} viewBox="0 0 24 24" fill="none" aria-hidden="true" className={className}>
+      <path d="M8.59 16.59L10 18l6-6-6-6-1.41 1.41L13.17 12z" fill="currentColor" />
+    </svg>
+  );
+}

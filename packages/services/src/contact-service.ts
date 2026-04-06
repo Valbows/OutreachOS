@@ -60,35 +60,104 @@ export interface UploadResult {
   errors: { row: number; message: string }[];
 }
 
+export interface PreviewResult {
+  headers: string[];
+  autoMapping: Record<string, string>;
+  unmapped: string[];
+  suggestions: Record<string, { field: string; confidence: number }[]>;
+  sampleRows: Record<string, string>[];
+  totalRows: number;
+  requiredFields: string[];
+  missingRequired: string[];
+}
+
 const REQUIRED_COLUMNS = ["firstname", "lastname", "businesswebsite", "companyname"];
 
 const COLUMN_MAP: Record<string, string> = {
   firstname: "firstName",
   first_name: "firstName",
   "first name": "firstName",
+  fname: "firstName",
+  first: "firstName",
+  givenname: "firstName",
+  given_name: "firstName",
   lastname: "lastName",
   last_name: "lastName",
   "last name": "lastName",
+  lname: "lastName",
+  last: "lastName",
+  surname: "lastName",
+  familyname: "lastName",
   businesswebsite: "businessWebsite",
   business_website: "businessWebsite",
   "business website": "businessWebsite",
   website: "businessWebsite",
+  url: "businessWebsite",
+  web: "businessWebsite",
+  site: "businessWebsite",
   companyname: "companyName",
   company_name: "companyName",
   "company name": "companyName",
   company: "companyName",
+  organization: "companyName",
+  org: "companyName",
+  orgname: "companyName",
   email: "email",
   "email address": "email",
+  emailaddress: "email",
+  mail: "email",
+  e_mail: "email",
   city: "city",
+  town: "city",
+  location: "city",
   state: "state",
   province: "state",
+  region: "state",
+  st: "state",
   linkedin: "linkedinUrl",
   linkedin_url: "linkedinUrl",
   "linkedin url": "linkedinUrl",
   linkedinurl: "linkedinUrl",
+  linkedinprofile: "linkedinUrl",
+  "linkedin profile": "linkedinUrl",
+  liurl: "linkedinUrl",
 };
 
 const MAX_EXPORT_CONTACTS = 100000;
+
+/** Calculate Levenshtein distance between two strings */
+function levenshteinDistance(a: string, b: string): number {
+  const matrix: number[][] = [];
+  for (let i = 0; i <= b.length; i++) {
+    matrix[i] = [i];
+  }
+  for (let j = 0; j <= a.length; j++) {
+    matrix[0][j] = j;
+  }
+  for (let i = 1; i <= b.length; i++) {
+    for (let j = 1; j <= a.length; j++) {
+      if (b.charAt(i - 1) === a.charAt(j - 1)) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j - 1] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j] + 1
+        );
+      }
+    }
+  }
+  return matrix[b.length][a.length];
+}
+
+/** Calculate similarity score (0-1) between two strings */
+function similarityScore(a: string, b: string): number {
+  if (a === b) return 1;
+  if (a.length === 0 || b.length === 0) return 0;
+  const distance = levenshteinDistance(a, b);
+  const maxLen = Math.max(a.length, b.length);
+  return 1 - distance / maxLen;
+}
 
 export class ContactService {
   /** List contacts with filtering, search, sorting, and pagination */
@@ -366,6 +435,166 @@ export class ContactService {
     return rows;
   }
 
+  /** Parse CSV content with custom user-provided column mapping */
+  static parseCSVWithMapping(content: string, userMapping: Record<string, string>): ParsedRow[] {
+    const lines = content.split(/\r?\n/).filter((l) => l.trim());
+    if (lines.length < 2) return [];
+
+    let headers: string[];
+    try {
+      headers = ContactService.parseCSVLine(lines[0]).map((h) => h.trim().replace(/^"|"$/g, ""));
+    } catch (err) {
+      throw new Error(`Failed to parse CSV header (line 1): ${err instanceof Error ? err.message : "Invalid format"}`);
+    }
+
+    // Apply user mapping: header -> field
+    const mappedHeaders = headers.map((h) => {
+      // If user provided a mapping for this header, use it; otherwise keep original
+      return userMapping[h] || h;
+    });
+
+    // Validate required columns exist (check for required field names in mapped headers)
+    const requiredFields = ["firstName", "lastName", "businessWebsite", "companyName"];
+    const mappedLower = mappedHeaders.map((h) => h.toLowerCase());
+    for (const req of requiredFields) {
+      if (!mappedLower.includes(req.toLowerCase())) {
+        throw new Error(`Missing required column: ${req}`);
+      }
+    }
+
+    const rows: ParsedRow[] = [];
+    for (let i = 1; i < lines.length; i++) {
+      let values: string[];
+      try {
+        values = ContactService.parseCSVLine(lines[i]);
+      } catch (err) {
+        throw new Error(`Failed to parse CSV row at line ${i + 1}: ${err instanceof Error ? err.message : "Invalid format"}`);
+      }
+
+      const row: Record<string, unknown> = {};
+      for (let j = 0; j < mappedHeaders.length; j++) {
+        const value = values[j]?.trim().replace(/^"|"$/g, "") || "";
+        // Skip empty mappings
+        if (mappedHeaders[j]) {
+          row[mappedHeaders[j]] = value;
+        }
+      }
+      rows.push(row as unknown as ParsedRow);
+    }
+
+    return rows;
+  }
+
+  /** Preview CSV content with auto-mapping, fuzzy suggestions, and sample rows */
+  static previewCSV(content: string): PreviewResult {
+    const lines = content.split(/\r?\n/).filter((l) => l.trim());
+    if (lines.length < 2) {
+      return {
+        headers: [],
+        autoMapping: {},
+        unmapped: [],
+        suggestions: {},
+        sampleRows: [],
+        totalRows: 0,
+        requiredFields: REQUIRED_COLUMNS.map((c) => COLUMN_MAP[c]),
+        missingRequired: REQUIRED_COLUMNS.map((c) => COLUMN_MAP[c]),
+      };
+    }
+
+    // Parse headers
+    let headers: string[];
+    try {
+      headers = ContactService.parseCSVLine(lines[0]).map((h) => h.trim().replace(/^"|"$/g, ""));
+    } catch (err) {
+      throw new Error(`Failed to parse CSV header (line 1): ${err instanceof Error ? err.message : "Invalid format"}`);
+    }
+
+    // Auto-mapping
+    const autoMapping: Record<string, string> = {};
+    const unmapped: string[] = [];
+    const suggestions: Record<string, { field: string; confidence: number }[]> = {};
+
+    for (const header of headers) {
+      const normalized = header.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const directMatch = COLUMN_MAP[normalized] || COLUMN_MAP[header.toLowerCase()];
+
+      if (directMatch) {
+        autoMapping[header] = directMatch;
+      } else {
+        unmapped.push(header);
+        // Generate fuzzy suggestions
+        const headerSuggestions = ContactService.fuzzyMatchSuggestion(header);
+        if (headerSuggestions.length > 0) {
+          suggestions[header] = headerSuggestions;
+        }
+      }
+    }
+
+    // Parse sample rows (first 3 data rows)
+    const sampleRows: Record<string, string>[] = [];
+    for (let i = 1; i < Math.min(lines.length, 4); i++) {
+      try {
+        const values = ContactService.parseCSVLine(lines[i]);
+        const row: Record<string, string> = {};
+        for (let j = 0; j < headers.length; j++) {
+          row[headers[j]] = values[j]?.trim().replace(/^"|"$/g, "") || "";
+        }
+        sampleRows.push(row);
+      } catch {
+        // Skip malformed rows in preview
+      }
+    }
+
+    // Calculate missing required fields
+    const mappedFields = new Set(Object.values(autoMapping));
+    const requiredFields = REQUIRED_COLUMNS.map((c) => COLUMN_MAP[c]);
+    const missingRequired = requiredFields.filter((f) => !mappedFields.has(f));
+
+    return {
+      headers,
+      autoMapping,
+      unmapped,
+      suggestions,
+      sampleRows,
+      totalRows: lines.length - 1, // Exclude header
+      requiredFields,
+      missingRequired,
+    };
+  }
+
+  /** Generate fuzzy match suggestions for a header */
+  static fuzzyMatchSuggestion(
+    header: string,
+    threshold = 0.6,
+    maxSuggestions = 3
+  ): { field: string; confidence: number }[] {
+    const normalizedHeader = header.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const knownHeaders = Object.keys(COLUMN_MAP);
+
+    const scored = knownHeaders
+      .map((known) => {
+        const normalizedKnown = known.toLowerCase().replace(/[^a-z0-9]/g, "");
+        const score = similarityScore(normalizedHeader, normalizedKnown);
+        return { field: COLUMN_MAP[known], score, original: known };
+      })
+      .filter((item) => item.score >= threshold)
+      .sort((a, b) => b.score - a.score);
+
+    // Deduplicate by field name
+    const seen = new Set<string>();
+    const unique: { field: string; confidence: number }[] = [];
+
+    for (const item of scored) {
+      if (!seen.has(item.field)) {
+        seen.add(item.field);
+        unique.push({ field: item.field, confidence: Math.round(item.score * 100) });
+        if (unique.length >= maxSuggestions) break;
+      }
+    }
+
+    return unique;
+  }
+
   /** Parse a single CSV line handling quoted values */
   static parseCSVLine(line: string): string[] {
     const result: string[] = [];
@@ -447,6 +676,40 @@ export class ContactService {
     await db
       .delete(contactGroups)
       .where(and(eq(contactGroups.id, groupId), eq(contactGroups.accountId, accountId)));
+  }
+
+  /** List contacts in a specific group with pagination */
+  static async listByGroup(
+    accountId: string,
+    groupId: string,
+    options: { limit?: number; offset?: number } = {},
+  ) {
+    const { limit = 100, offset = 0 } = options;
+    
+    const result = await db
+      .select({
+        id: contacts.id,
+        firstName: contacts.firstName,
+        lastName: contacts.lastName,
+        email: contacts.email,
+        businessWebsite: contacts.businessWebsite,
+        companyName: contacts.companyName,
+        enrichedAt: contacts.enrichedAt,
+        hunterScore: contacts.hunterScore,
+        hunterStatus: contacts.hunterStatus,
+      })
+      .from(contacts)
+      .innerJoin(contactGroupMembers, eq(contacts.id, contactGroupMembers.contactId))
+      .where(
+        and(
+          eq(contacts.accountId, accountId),
+          eq(contactGroupMembers.groupId, groupId),
+        )
+      )
+      .limit(limit)
+      .offset(offset);
+    
+    return result;
   }
 
   /** Export contacts as CSV string */

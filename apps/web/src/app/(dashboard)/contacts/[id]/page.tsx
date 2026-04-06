@@ -1,50 +1,35 @@
 "use client";
 
+import { useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { Button, Badge, Card, CardContent, CardHeader, CardTitle } from "@/components/ui";
-import { useContact } from "@/lib/hooks/use-contacts";
-
-interface ContactStats {
-  emailsSent: number;
-  totalOpens: number;
-  replies: number;
-  unsubscribes: number;
-  softBounces: number;
-  hardBounces: number;
-}
-
-interface TimeSlot {
-  hour: number;
-  count: number;
-}
-
-interface DaySlot {
-  day: string;
-  count: number;
-}
-
-// Analytics data — will be wired to real endpoints in Phase 5 when email sending is implemented
-const EMPTY_STATS: ContactStats = {
-  emailsSent: 0,
-  totalOpens: 0,
-  replies: 0,
-  unsubscribes: 0,
-  softBounces: 0,
-  hardBounces: 0,
-};
-
-const HOURS: TimeSlot[] = Array.from({ length: 24 }, (_, i) => ({ hour: i, count: 0 }));
-const DAYS: DaySlot[] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => ({
-  day: d,
-  count: 0,
-}));
+import { Button, Badge, Card, CardContent, CardHeader, CardTitle, Input, Modal } from "@/components/ui";
+import { 
+  useContact, 
+  useContactAnalytics, 
+  useReEnrichContact,
+  useUpdateCustomField,
+  useDeleteCustomField,
+} from "@/lib/hooks/use-contacts";
 
 export default function ContactDetailPage() {
   const params = useParams();
   const router = useRouter();
   const rawId = params.id;
   const contactId = Array.isArray(rawId) ? rawId[0] : rawId;
+
+  // Custom field editing state
+  const [editingField, setEditingField] = useState<string | null>(null);
+  const [editFieldValue, setEditFieldValue] = useState<string>("");
+  const [showAddFieldModal, setShowAddFieldModal] = useState(false);
+  const [newFieldName, setNewFieldName] = useState("");
+  const [newFieldValue, setNewFieldValue] = useState("");
+  const [fieldError, setFieldError] = useState<string | null>(null);
+
+  // Re-enrichment mutation
+  const reEnrich = useReEnrichContact();
+  const updateField = useUpdateCustomField();
+  const deleteField = useDeleteCustomField();
 
   if (!contactId) {
     return (
@@ -80,9 +65,68 @@ export default function ContactDetailPage() {
   }
 
   const { data: contact, isLoading: loading } = useContact(contactId);
-  const stats: ContactStats = EMPTY_STATS;
-  const hourlyOpens: TimeSlot[] = HOURS;
-  const dailyOpens: DaySlot[] = DAYS;
+  const { data: analytics } = useContactAnalytics(contactId);
+  
+  // Use real analytics data or fallback to empty
+  const stats = {
+    emailsSent: analytics?.emailsSent ?? 0,
+    totalOpens: analytics?.totalOpens ?? 0,
+    replies: analytics?.replies ?? 0,
+    unsubscribes: analytics?.unsubscribes ?? 0,
+    softBounces: analytics?.softBounces ?? 0,
+    hardBounces: analytics?.hardBounces ?? 0,
+  };
+  const hourlyOpens = analytics?.hourlyOpens ?? Array.from({ length: 24 }, (_, i) => ({ hour: i, count: 0 }));
+  const dailyOpens = analytics?.dailyOpens ?? ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => ({ day: d, count: 0 }));
+
+  // Handlers for custom fields
+  const handleStartEdit = useCallback((key: string, value: unknown) => {
+    setEditingField(key);
+    setEditFieldValue(String(value));
+    setFieldError(null);
+  }, []);
+
+  const handleSaveField = useCallback((key: string) => {
+    updateField.mutate(
+      { contactId, fieldName: key, fieldValue: editFieldValue },
+      {
+        onSuccess: () => {
+          setEditingField(null);
+          setFieldError(null);
+        },
+        onError: (err) => setFieldError(err.message),
+      }
+    );
+  }, [contactId, editFieldValue, updateField]);
+
+  const handleDeleteField = useCallback((key: string) => {
+    deleteField.mutate(
+      { contactId, fieldName: key },
+      {
+        onError: (err) => setFieldError(err.message),
+      }
+    );
+  }, [contactId, deleteField]);
+
+  const handleAddField = useCallback(() => {
+    if (!newFieldName.trim()) return;
+    updateField.mutate(
+      { contactId, fieldName: newFieldName.trim(), fieldValue: newFieldValue },
+      {
+        onSuccess: () => {
+          setShowAddFieldModal(false);
+          setNewFieldName("");
+          setNewFieldValue("");
+          setFieldError(null);
+        },
+        onError: (err) => setFieldError(err.message),
+      }
+    );
+  }, [contactId, newFieldName, newFieldValue, updateField]);
+
+  const handleReEnrich = useCallback(() => {
+    reEnrich.mutate(contactId);
+  }, [contactId, reEnrich]);
 
   if (loading) {
     return (
@@ -235,10 +279,11 @@ export default function ContactDetailPage() {
                 variant="ghost"
                 size="sm"
                 className="ml-auto"
-                disabled={true}
-                title="Re-enrichment coming soon"
+                disabled={reEnrich.isPending}
+                onClick={handleReEnrich}
+                title="Re-enrich this contact via Hunter.io"
               >
-                Re-enrich
+                {reEnrich.isPending ? "Enriching..." : "Re-enrich"}
               </Button>
             </div>
           </CardContent>
@@ -346,26 +391,153 @@ export default function ContactDetailPage() {
       </Card>
 
       {/* Custom Fields */}
-      {contact.customFields && Object.keys(contact.customFields).length > 0 && (
-        <Card className="mb-6">
-          <CardHeader>
-            <CardTitle className="text-sm font-mono uppercase tracking-wider text-on-surface-variant">
-              Custom Fields
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 gap-3">
+      <Card className="mb-6">
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle className="text-sm font-mono uppercase tracking-wider text-on-surface-variant">
+            Custom Fields
+          </CardTitle>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setShowAddFieldModal(true);
+              setNewFieldName("");
+              setNewFieldValue("");
+              setFieldError(null);
+            }}
+          >
+            + Add Field
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {fieldError && (
+            <div className="mb-3 p-2 rounded bg-error-container text-on-error-container text-sm">
+              {fieldError}
+            </div>
+          )}
+          {contact.customFields && Object.keys(contact.customFields).length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {Object.entries(contact.customFields).map(([key, value]) => (
-                <div key={key} className="flex items-center gap-2 px-3 py-2 bg-surface-container-low rounded-[var(--radius-input)]">
-                  <span className="text-xs font-mono text-on-surface-variant">{key}:</span>
-                  <span className="text-sm text-on-surface">{String(value)}</span>
+                <div key={key} className="flex items-center gap-2 px-3 py-2 bg-surface-container-low rounded-[var(--radius-input)] group">
+                  <span className="text-xs font-mono text-on-surface-variant shrink-0">{key}:</span>
+                  {editingField === key ? (
+                    <div className="flex-1 flex items-center gap-2">
+                      <Input
+                        value={editFieldValue}
+                        onChange={(e) => setEditFieldValue(e.target.value)}
+                        className="flex-1 h-7 text-sm"
+                        autoFocus
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") handleSaveField(key);
+                          if (e.key === "Escape") setEditingField(null);
+                        }}
+                      />
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleSaveField(key)}
+                        disabled={updateField.isPending}
+                      >
+                        {updateField.isPending ? "..." : "Save"}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setEditingField(null)}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  ) : (
+                    <>
+                      <span className="flex-1 text-sm text-on-surface truncate">{String(value)}</span>
+                      <div className="opacity-0 group-hover:opacity-100 flex items-center gap-1 transition-opacity">
+                        <button
+                          onClick={() => handleStartEdit(key, value)}
+                          className="p-1 rounded hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface transition-colors"
+                          title="Edit field"
+                        >
+                          <EditIcon />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteField(key)}
+                          className="p-1 rounded hover:bg-error-container text-on-surface-variant hover:text-error transition-colors"
+                          title="Delete field"
+                          disabled={deleteField.isPending}
+                        >
+                          <TrashIcon />
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
               ))}
             </div>
-          </CardContent>
-        </Card>
-      )}
+          ) : (
+            <p className="text-sm text-on-surface-variant">No custom fields yet. Click &quot;Add Field&quot; to create one.</p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Add Custom Field Modal */}
+      <Modal
+        open={showAddFieldModal}
+        onClose={() => setShowAddFieldModal(false)}
+        title="Add Custom Field"
+      >
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-on-surface mb-1">Field Name</label>
+            <Input
+              value={newFieldName}
+              onChange={(e) => setNewFieldName(e.target.value)}
+              placeholder="e.g., industry, notes, priority"
+              autoFocus
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-on-surface mb-1">Value</label>
+            <Input
+              value={newFieldValue}
+              onChange={(e) => setNewFieldValue(e.target.value)}
+              placeholder="Enter value"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleAddField();
+              }}
+            />
+          </div>
+          {fieldError && (
+            <div className="p-2 rounded bg-error-container text-on-error-container text-sm">
+              {fieldError}
+            </div>
+          )}
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="secondary" onClick={() => setShowAddFieldModal(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleAddField} disabled={!newFieldName.trim() || updateField.isPending}>
+              {updateField.isPending ? "Adding..." : "Add Field"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
+  );
+}
+
+function EditIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" fill="currentColor" />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" fill="currentColor" />
+    </svg>
   );
 }
 

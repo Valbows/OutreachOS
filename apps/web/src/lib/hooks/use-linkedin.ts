@@ -2,6 +2,14 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
+export interface BatchGenerateResult {
+  entries: PlaybookEntry[];
+  errors: { contactId?: string; error: string }[];
+  total: number;
+  successCount: number;
+  errorCount: number;
+}
+
 export interface PlaybookEntry {
   id: string;
   accountId: string;
@@ -107,6 +115,27 @@ export function useDeletePlaybookEntry() {
     mutationFn: async (id) => {
       const res = await fetch(`/api/linkedin/${id}`, { method: "DELETE" });
       if (!res.ok) throw new Error("Failed to delete entry");
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["linkedin"] });
+    },
+  });
+}
+
+export function useBatchGenerateLinkedInCopy() {
+  const queryClient = useQueryClient();
+  return useMutation<BatchGenerateResult, Error, { contactIds?: string[]; groupId?: string; prompt: string; researchNotes?: string }>({
+    mutationFn: async (input) => {
+      const res = await fetch("/api/linkedin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? "Failed to batch generate copy");
+      }
+      return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["linkedin"] });

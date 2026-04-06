@@ -106,9 +106,20 @@ vi.mock("@/lib/hooks/use-templates", () => ({
 
 vi.mock("@/lib/hooks/use-contacts", () => ({
   useContacts: vi.fn(() => ({ data: undefined, isLoading: false })),
-  useContactGroups: vi.fn(() => ({ data: [] })),
-  useDeleteContacts: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
   useContact: vi.fn(() => ({ data: null, isLoading: false })),
+  useCreateContact: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+  useUpdateContact: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+  useDeleteContacts: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
+  useContactGroups: vi.fn(() => ({ data: [] })),
+  useCreateGroup: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+  useUpdateGroup: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+  useDeleteGroup: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
+  useAddToGroup: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
+  useRemoveFromGroup: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
+  useContactAnalytics: vi.fn(() => ({ data: null, isLoading: false })),
+  useReEnrichContact: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+  useUpdateCustomField: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+  useDeleteCustomField: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
   contactKeys: {
     all: ["contacts"],
     lists: () => ["contacts", "list"],
@@ -174,7 +185,7 @@ describe("app routes and layouts", () => {
 
   it("redirects the home page to the dashboard group", () => {
     Home();
-    expect(redirect).toHaveBeenCalledWith("/");
+    expect(redirect).toHaveBeenCalledWith("/contacts");
   });
 
   it("renders the auth layout and pages", () => {

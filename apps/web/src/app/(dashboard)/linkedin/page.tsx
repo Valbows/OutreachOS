@@ -7,8 +7,11 @@ import {
   useRegenerateLinkedInCopy,
   useUpdatePlaybookStatus,
   useDeletePlaybookEntry,
+  useBatchGenerateLinkedInCopy,
   type PlaybookEntry,
+  type BatchGenerateResult,
 } from "@/lib/hooks/use-linkedin";
+import { useContactGroups, useContacts } from "@/lib/hooks/use-contacts";
 
 const statusColors: Record<string, string> = {
   generated: "bg-[#41eec2]/20 text-[#41eec2]",
@@ -23,16 +26,25 @@ export default function LinkedInPlaybookPage() {
   const regenerateMutation = useRegenerateLinkedInCopy();
   const statusMutation = useUpdatePlaybookStatus();
   const deleteMutation = useDeletePlaybookEntry();
+  const batchMutation = useBatchGenerateLinkedInCopy();
+  const { data: groupsData } = useContactGroups();
+  const { data: contactsData } = useContacts();
 
   const [selectedEntry, setSelectedEntry] = useState<PlaybookEntry | null>(null);
   const [showGeneratePanel, setShowGeneratePanel] = useState(false);
+  const [showBatchPanel, setShowBatchPanel] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [researchNotes, setResearchNotes] = useState("");
   const [copySuccess, setCopySuccess] = useState(false);
+  const [selectedContacts, setSelectedContacts] = useState<string[]>([]);
+  const [selectedGroup, setSelectedGroup] = useState<string>("");
+  const [batchResult, setBatchResult] = useState<BatchGenerateResult | null>(null);
   const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const entries = data?.entries ?? [];
   const total = data?.total ?? 0;
+  const groups = groupsData ?? [];
+  const contacts = contactsData?.data ?? [];
 
   const stats = {
     total: entries.length,
@@ -50,6 +62,28 @@ export default function LinkedInPlaybookPage() {
       setResearchNotes("");
     } catch (err) {
       console.error("Generate failed:", err instanceof Error ? err.message : err);
+    }
+  }
+
+  async function handleBatchGenerate() {
+    if (!prompt.trim()) return;
+    if (selectedContacts.length === 0 && !selectedGroup) return;
+    
+    try {
+      const result = await batchMutation.mutateAsync({
+        contactIds: selectedContacts.length > 0 ? selectedContacts : undefined,
+        groupId: selectedGroup || undefined,
+        prompt,
+        researchNotes: researchNotes || undefined,
+      });
+      setBatchResult(result);
+      setShowBatchPanel(false);
+      setPrompt("");
+      setResearchNotes("");
+      setSelectedContacts([]);
+      setSelectedGroup("");
+    } catch (err) {
+      console.error("Batch generate failed:", err instanceof Error ? err.message : err);
     }
   }
 
@@ -81,15 +115,26 @@ export default function LinkedInPlaybookPage() {
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-2xl font-semibold tracking-tight text-[#e4e1e9]">LinkedIn Playbook</h1>
-          <button
-            onClick={() => setShowGeneratePanel(true)}
-            className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-[#c4c0ff] to-[#8781ff] px-4 py-2 text-sm font-medium text-[#100069] hover:opacity-90 transition-opacity"
-          >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-              <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-            </svg>
-            Generate Copy
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setShowBatchPanel(true)}
+              className="inline-flex items-center gap-2 rounded-lg bg-[#2a292f] px-4 py-2 text-sm font-medium text-[#c7c4d8] hover:bg-[#35343a] transition-colors ring-1 ring-[#464555]/30"
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+              Batch Generate
+            </button>
+            <button
+              onClick={() => setShowGeneratePanel(true)}
+              className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-[#c4c0ff] to-[#8781ff] px-4 py-2 text-sm font-medium text-[#100069] hover:opacity-90 transition-opacity"
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+              Generate Copy
+            </button>
+          </div>
         </div>
 
         {/* Stats */}
@@ -154,9 +199,132 @@ export default function LinkedInPlaybookPage() {
         )}
       </div>
 
-      {/* Right Panel — Detail or Generate */}
+      {/* Right Panel — Detail, Generate, or Batch */}
       <div className="w-[400px] shrink-0">
-        {showGeneratePanel ? (
+        {showBatchPanel ? (
+          <div className="rounded-xl bg-[#1f1f25] p-5 sticky top-4 max-h-[calc(100vh-2rem)] overflow-y-auto">
+            <h2 className="text-lg font-semibold text-[#e4e1e9] mb-4">Batch Generate LinkedIn Copy</h2>
+
+            {/* Target Selection */}
+            <div className="mb-4">
+              <label className="block text-xs font-medium text-[#c7c4d8] mb-1.5">
+                Target Group (optional)
+              </label>
+              <select
+                value={selectedGroup}
+                onChange={(e) => { setSelectedGroup(e.target.value); setSelectedContacts([]); }}
+                className="w-full rounded-lg bg-[#2a292f] px-3 py-2 text-sm text-[#e4e1e9] focus:outline-none focus:ring-2 focus:ring-[#c4c0ff]"
+              >
+                <option value="">— Select a group —</option>
+                {groups.map((g) => (
+                  <option key={g.id} value={g.id}>{g.name}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Contact Selection */}
+            {!selectedGroup && (
+              <div className="mb-4">
+                <label className="block text-xs font-medium text-[#c7c4d8] mb-1.5">
+                  Or Select Contacts ({selectedContacts.length} selected)
+                  {contacts.length > 50 && (
+                    <span className="ml-2 text-[#918fa1]">— Showing 50 of {contacts.length} contacts</span>
+                  )}
+                </label>
+                <div className="max-h-[150px] overflow-y-auto rounded-lg bg-[#2a292f] p-2 space-y-1">
+                  {contacts.slice(0, 50).map((c) => (
+                    <label key={c.id} className="flex items-center gap-2 px-2 py-1 hover:bg-[#35343a] rounded cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={selectedContacts.includes(c.id)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedContacts([...selectedContacts, c.id]);
+                          } else {
+                            setSelectedContacts(selectedContacts.filter(id => id !== c.id));
+                          }
+                        }}
+                        className="rounded border-[#464555] bg-[#1f1f25] text-[#c4c0ff]"
+                      />
+                      <span className="text-sm text-[#e4e1e9] truncate">{c.firstName} {c.lastName}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <label className="block text-xs font-medium text-[#c7c4d8] mb-1.5" htmlFor="batch-prompt">
+              Prompt Instructions
+            </label>
+            <textarea
+              id="batch-prompt"
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              placeholder="Generate personalized LinkedIn connection requests..."
+              className="w-full rounded-lg bg-[#2a292f] px-3 py-2 text-sm text-[#e4e1e9] placeholder:text-[#918fa1] focus:outline-none focus:ring-2 focus:ring-[#c4c0ff] mb-3 min-h-[80px] resize-y"
+            />
+
+            <label className="block text-xs font-medium text-[#c7c4d8] mb-1.5" htmlFor="batch-notes">
+              Research Notes (optional)
+            </label>
+            <textarea
+              id="batch-notes"
+              value={researchNotes}
+              onChange={(e) => setResearchNotes(e.target.value)}
+              placeholder="Applied to AI companies, mention their recent funding..."
+              className="w-full rounded-lg bg-[#2a292f] px-3 py-2 text-sm text-[#e4e1e9] placeholder:text-[#918fa1] focus:outline-none focus:ring-2 focus:ring-[#c4c0ff] mb-4 min-h-[60px] resize-y"
+            />
+
+            <div className="flex gap-2">
+              <button
+                onClick={handleBatchGenerate}
+                disabled={batchMutation.isPending || !prompt.trim() || (selectedContacts.length === 0 && !selectedGroup)}
+                className="flex-1 rounded-lg bg-gradient-to-r from-[#c4c0ff] to-[#8781ff] px-4 py-2 text-sm font-medium text-[#100069] hover:opacity-90 disabled:opacity-50 transition-opacity"
+              >
+                {batchMutation.isPending ? `Generating ${selectedContacts.length || 1}…` : `Generate ${selectedContacts.length || (selectedGroup ? "Group" : "0")}`}
+              </button>
+              <button
+                onClick={() => setShowBatchPanel(false)}
+                className="rounded-lg px-4 py-2 text-sm font-medium text-[#c7c4d8] hover:bg-[#2a292f] transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+
+            {batchResult && (
+              <div className="mt-4 p-3 rounded-lg bg-[#35343a] border border-[#464555]/30">
+                <p className="text-sm font-medium text-[#41eec2] mb-1">
+                  ✓ Batch Complete: {batchResult.successCount} of {batchResult.total} generated
+                </p>
+                {batchResult.errorCount > 0 && (
+                  <p className="text-xs text-[#ffb4ab]">
+                    {batchResult.errorCount} failed
+                  </p>
+                )}
+                {batchResult.errors.length > 0 && (
+                  <details className="mt-2">
+                    <summary className="text-xs text-[#c7c4d8] cursor-pointer">
+                      View failed contacts
+                    </summary>
+                    <ul className="mt-1 text-xs text-[#918fa1] max-h-[100px] overflow-y-auto">
+                      {batchResult.errors.map((err: { contactId?: string; error: string }) => (
+                        <li key={err.contactId || err.error}>
+                          {err.contactId ? `${err.contactId}: ` : ""}{err.error}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
+              </div>
+            )}
+
+            {batchMutation.isError && (
+              <p className="mt-3 text-sm text-[#ffb4ab]">
+                {batchMutation.error.message}
+              </p>
+            )}
+          </div>
+        ) : showGeneratePanel ? (
           <div className="rounded-xl bg-[#1f1f25] p-5 sticky top-4">
             <h2 className="text-lg font-semibold text-[#e4e1e9] mb-4">Generate LinkedIn Copy</h2>
 
