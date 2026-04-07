@@ -9,6 +9,7 @@ const ALLOWED_TYPES = [
   "text/html",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 ];
+const ALLOWED_EXTENSIONS = [".txt", ".md", ".html", ".htm", ".docx"];
 
 export async function POST(request: NextRequest) {
   try {
@@ -33,11 +34,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "File too large (max 10MB)" }, { status: 400 });
     }
 
-    // Validate MIME type
-    if (!ALLOWED_TYPES.includes(file.type)) {
+    // Validate MIME type or extension
+    const hasAllowedType = ALLOWED_TYPES.includes(file.type);
+    const hasAllowedExtension = ALLOWED_EXTENSIONS.some((ext) =>
+      file.name.toLowerCase().endsWith(ext)
+    );
+    if (!hasAllowedType && !hasAllowedExtension) {
       return NextResponse.json(
         {
-          error: `Unsupported file type: ${file.type}. Allowed types: ${ALLOWED_TYPES.join(", ")}`,
+          error: `Unsupported file type: ${file.type} (${file.name}). Allowed types: ${ALLOWED_TYPES.join(", ")} or extensions: ${ALLOWED_EXTENSIONS.join(", ")}`,
         },
         { status: 400 }
       );

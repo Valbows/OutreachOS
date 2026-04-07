@@ -401,6 +401,7 @@ export class ExperimentService {
         // Check for Resend API errors
         if (result.error || !result.data?.id) {
           failed++;
+          const errorMsg = result.error?.message ?? "Resend API error";
           await db.insert(messageInstances).values({
             campaignId: experiment.campaignId,
             contactId: contact.id,
@@ -410,6 +411,11 @@ export class ExperimentService {
             subject: batch.variantA,
             status: "failed",
             sentAt: new Date(),
+          });
+          failedContacts.push({
+            contactId: contact.id,
+            email: contact.email ?? "unknown",
+            error: errorMsg,
           });
         } else {
           sent++;
@@ -439,6 +445,24 @@ export class ExperimentService {
           email: contact.email ?? "unknown",
           error: errorMsg,
         });
+        // Record failed message instance (wrapped to prevent disrupting loop)
+        try {
+          await db.insert(messageInstances).values({
+            campaignId: experiment.campaignId,
+            contactId: contact.id,
+            templateId: sendConfig.templateId,
+            experimentBatchId: batchId,
+            resendMessageId: null,
+            subject: batch.variantA,
+            status: "failed",
+            sentAt: new Date(),
+          });
+        } catch (dbErr) {
+          console.error("[ExperimentService] Failed to record message instance for failed send", {
+            contactId: contact.id,
+            error: dbErr instanceof Error ? dbErr.message : String(dbErr),
+          });
+        }
       }
     }
 
@@ -465,6 +489,7 @@ export class ExperimentService {
         // Check for Resend API errors
         if (result.error || !result.data?.id) {
           failed++;
+          const errorMsg = result.error?.message ?? "Resend API error";
           await db.insert(messageInstances).values({
             campaignId: experiment.campaignId,
             contactId: contact.id,
@@ -474,6 +499,11 @@ export class ExperimentService {
             subject: batch.variantB,
             status: "failed",
             sentAt: new Date(),
+          });
+          failedContacts.push({
+            contactId: contact.id,
+            email: contact.email ?? "unknown",
+            error: errorMsg,
           });
         } else {
           sent++;

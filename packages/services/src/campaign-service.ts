@@ -662,10 +662,25 @@ export class CampaignService {
 
   /** Convert plain text to HTML if not already HTML */
   private static convertPlainTextToHtml(text: string): string {
-    // Check if already HTML (starts with '<' after optional whitespace)
+    // Check if already HTML by looking for valid HTML tag patterns
     const trimmed = text.trim();
-    if (trimmed.startsWith('<')) {
-      return text;
+    // More robust HTML detection: look for complete HTML tag structure
+    const hasHtmlTags = /<[^>]+>/.test(trimmed) && /<\/?[a-zA-Z][^>]*>/.test(trimmed);
+    
+    if (hasHtmlTags) {
+      // Sanitize HTML: remove script tags, event handlers, and dangerous attributes
+      let sanitized = trimmed;
+      
+      // Remove script tags and their contents
+      sanitized = sanitized.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '');
+      
+      // Remove event handlers (on* attributes)
+      sanitized = sanitized.replace(/\s+on\w+\s*=\s*["'][^"']*["']/gi, '');
+      
+      // Remove javascript: and data: URLs
+      sanitized = sanitized.replace(/(href|src|action)\s*=\s*["']\s*(javascript|data):[^"']*["']/gi, '$1=""');
+      
+      return sanitized;
     }
 
     // Escape HTML special characters
