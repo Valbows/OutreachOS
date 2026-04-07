@@ -5,6 +5,7 @@
 
 import { db, templates } from "@outreachos/db";
 import { eq, and, desc } from "drizzle-orm";
+import mammoth from "mammoth";
 
 // Built-in merge tokens supported in templates
 const BUILT_IN_TOKENS = [
@@ -213,6 +214,32 @@ export class TemplateService {
     }
 
     return TemplateService.create({ accountId, name, bodyHtml });
+  }
+
+  /** Import .docx file content as a template using Mammoth.js */
+  static async importFromDocx(
+    accountId: string,
+    name: string,
+    buffer: Buffer,
+  ) {
+    try {
+      const result = await mammoth.convertToHtml({ buffer });
+      // Clean up HTML: remove empty paragraphs, normalize spacing
+      const bodyHtml = result.value
+        .replace(/<p>\s*<\/p>/g, "")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+
+      return TemplateService.create({ accountId, name, bodyHtml });
+    } catch (err) {
+      const originalMessage = err instanceof Error ? err.message : String(err);
+      console.error("[TemplateService] DOCX conversion failed", {
+        accountId,
+        templateName: name,
+        error: originalMessage,
+      });
+      throw new Error(`Failed to convert DOCX to HTML for template "${name}": ${originalMessage}`);
+    }
   }
 
   /** Markdown to HTML conversion with stateful parser for block elements */

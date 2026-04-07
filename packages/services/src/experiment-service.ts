@@ -9,8 +9,11 @@ import {
   experimentBatches,
   messageInstances,
   emailEvents,
+  contacts,
 } from "@outreachos/db";
-import { eq, and, desc, sql, count } from "drizzle-orm";
+import { eq, and, desc, sql, count, not, inArray } from "drizzle-orm";
+import { Resend } from "resend";
+import { TemplateService, type RenderContext } from "./template-service.js";
 
 const CONTACTS_PER_VARIANT = 20;
 const MIN_BATCH_SIZE = 10; // Minimum contacts per variant for statistical significance
@@ -294,6 +297,216 @@ export class ExperimentService {
       .where(and(eq(experiments.id, experimentId), eq(experiments.accountId, accountId)));
 
     return experiment.championVariant;
+  }
+
+  /** Send a batch of A/B test emails — splits contacts evenly between variants */
+  static async sendBatch(
+    accountId: string,
+    experimentId: string,
+    batchId: string,
+    sendConfig: {
+      resendApiKey: string;
+      fromEmail: string;
+      fromName?: string;
+      replyTo?: string;
+      templateId: string;
+    },
+  ): Promise<{ sent: number; failed: number; failedContacts: Array<{ contactId: string; email: string; error: string }> }> {
+    const experiment = await ExperimentService.getById(accountId, experimentId);
+    if (!experiment) throw new Error("Experiment not found");
+
+    const [batch] = await db
+      .select()
+      .from(experimentBatches)
+      .where(and(eq(experimentBatches.id, batchId), eq(experimentBatches.experimentId, experimentId)))
+      .limit(1);
+    if (!batch) throw new Error("Batch not found");
+
+    const perVariant = batch.contactsPerVariant ?? CONTACTS_PER_VARIANT;
+
+    // Get template for the email body
+    const template = await TemplateService.getById(accountId, sendConfig.templateId);
+    if (!template) throw new Error("Template not found");
+    if (!template.bodyHtml) throw new Error("Template has no body content");
+
+    // Get eligible contacts not already in any batch of this experiment
+    const existingContactIds = await db
+      .select({ contactId: messageInstances.contactId })
+      .from(messageInstances)
+      .innerJoin(experimentBatches, eq(messageInstances.experimentBatchId, experimentBatches.id))
+      .where(eq(experimentBatches.experimentId, experimentId));
+
+    const usedIds = existingContactIds.map((r) => r.contactId);
+
+    // Get fresh contacts for this batch from the campaign's group
+    const groupId = experiment.campaignId
+      ? (await db.select().from(experiments).where(eq(experiments.id, experimentId)).limit(1))[0]?.campaignId
+      : null;
+
+    let contactList;
+    if (groupId) {
+      const { ContactService } = await import("./contact-service.js");
+      const { data } = await ContactService.list({
+        accountId,
+        groupId,
+        limit: perVariant * 2 + usedIds.length,
+        offset: 0,
+      });
+      contactList = data.filter((c) => !usedIds.includes(c.id) && !c.unsubscribed && c.email);
+    } else {
+      contactList = await db
+        .select()
+        .from(contacts)
+        .where(
+          and(
+            eq(contacts.accountId, accountId),
+            ...(usedIds.length > 0 ? [not(inArray(contacts.id, usedIds))] : []),
+          ),
+        )
+        .limit(perVariant * 2);
+      contactList = contactList.filter((c) => !c.unsubscribed && c.email);
+    }
+
+    // Split contacts evenly between variants
+    const halfSize = Math.min(perVariant, Math.floor(contactList.length / 2));
+    const variantAContacts = contactList.slice(0, halfSize);
+    const variantBContacts = contactList.slice(halfSize, halfSize * 2);
+
+    const resend = new Resend(sendConfig.resendApiKey);
+    const fallbacks = (template.tokenFallbacks as Record<string, string>) ?? {};
+    let sent = 0;
+    let failed = 0;
+    const failedContacts: Array<{ contactId: string; email: string; error: string }> = [];
+
+    // Send variant A emails
+    for (const contact of variantAContacts) {
+      try {
+        const context: RenderContext = {
+          firstName: contact.firstName ?? undefined,
+          lastName: contact.lastName ?? undefined,
+          companyName: contact.companyName ?? undefined,
+          email: contact.email ?? undefined,
+        };
+        const renderedHtml = TemplateService.render(template.bodyHtml!, context, fallbacks);
+        const result = await resend.emails.send({
+          from: sendConfig.fromName
+            ? `${sendConfig.fromName} <${sendConfig.fromEmail}>`
+            : sendConfig.fromEmail,
+          to: contact.email!,
+          subject: batch.variantA,
+          html: renderedHtml,
+          replyTo: sendConfig.replyTo,
+        });
+
+        // Check for Resend API errors
+        if (result.error || !result.data?.id) {
+          failed++;
+          await db.insert(messageInstances).values({
+            campaignId: experiment.campaignId,
+            contactId: contact.id,
+            templateId: sendConfig.templateId,
+            experimentBatchId: batchId,
+            resendMessageId: null,
+            subject: batch.variantA,
+            status: "failed",
+            sentAt: new Date(),
+          });
+        } else {
+          sent++;
+          await db.insert(messageInstances).values({
+            campaignId: experiment.campaignId,
+            contactId: contact.id,
+            templateId: sendConfig.templateId,
+            experimentBatchId: batchId,
+            resendMessageId: result.data.id,
+            subject: batch.variantA,
+            status: "sent",
+            sentAt: new Date(),
+          });
+        }
+      } catch (err) {
+        failed++;
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        console.error("[ExperimentService] Failed to send variant A email", {
+          contactId: contact.id,
+          email: contact.email,
+          error: errorMsg,
+          experimentId,
+          batchId,
+        });
+        failedContacts.push({
+          contactId: contact.id,
+          email: contact.email ?? "unknown",
+          error: errorMsg,
+        });
+      }
+    }
+
+    // Send variant B emails
+    for (const contact of variantBContacts) {
+      try {
+        const context: RenderContext = {
+          firstName: contact.firstName ?? undefined,
+          lastName: contact.lastName ?? undefined,
+          companyName: contact.companyName ?? undefined,
+          email: contact.email ?? undefined,
+        };
+        const renderedHtml = TemplateService.render(template.bodyHtml!, context, fallbacks);
+        const result = await resend.emails.send({
+          from: sendConfig.fromName
+            ? `${sendConfig.fromName} <${sendConfig.fromEmail}>`
+            : sendConfig.fromEmail,
+          to: contact.email!,
+          subject: batch.variantB,
+          html: renderedHtml,
+          replyTo: sendConfig.replyTo,
+        });
+
+        // Check for Resend API errors
+        if (result.error || !result.data?.id) {
+          failed++;
+          await db.insert(messageInstances).values({
+            campaignId: experiment.campaignId,
+            contactId: contact.id,
+            templateId: sendConfig.templateId,
+            experimentBatchId: batchId,
+            resendMessageId: null,
+            subject: batch.variantB,
+            status: "failed",
+            sentAt: new Date(),
+          });
+        } else {
+          sent++;
+          await db.insert(messageInstances).values({
+            campaignId: experiment.campaignId,
+            contactId: contact.id,
+            templateId: sendConfig.templateId,
+            experimentBatchId: batchId,
+            resendMessageId: result.data.id,
+            subject: batch.variantB,
+            status: "sent",
+            sentAt: new Date(),
+          });
+        }
+      } catch (err) {
+        failed++;
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        console.error("[ExperimentService] Failed to send variant B email", {
+          contactId: contact.id,
+          email: contact.email,
+          error: errorMsg,
+          experimentId,
+          batchId,
+        });
+        failedContacts.push({
+          contactId: contact.id,
+          email: contact.email ?? "unknown",
+          error: errorMsg,
+        });
+      }
+    }
+
+    return { sent, failed, failedContacts };
   }
 
   /** Get experiment summary with batch stats */

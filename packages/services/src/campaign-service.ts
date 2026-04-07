@@ -14,6 +14,7 @@ import {
 } from "@outreachos/db";
 import { eq, and, sql, desc, count } from "drizzle-orm";
 import { TemplateService, type RenderContext } from "./template-service.js";
+import { LLMService, type LLMConfig } from "./llm-service.js";
 
 const COMPLAINT_RATE_THRESHOLD = 0.001; // 0.1% — auto-pause if exceeded
 const BATCH_SEND_DELAY_MS = 100; // ~10 emails/s to stay within Resend rate limits
@@ -278,6 +279,178 @@ export class CampaignService {
     return progress;
   }
 
+  /** Send campaign with LLM-generated personalized emails per contact (Individual mode) */
+  static async sendCampaignIndividual(
+    accountId: string,
+    campaignId: string,
+    config: SendConfig,
+    llmConfig: LLMConfig,
+    promptTemplate: string,
+    onProgress?: (progress: SendProgress) => void,
+  ): Promise<SendProgress> {
+    const campaign = await CampaignService.getById(accountId, campaignId);
+    if (!campaign) throw new Error("Campaign not found");
+
+    const contactList = await CampaignService.getCampaignContacts(accountId, campaign.groupId);
+    const progress: SendProgress = { total: contactList.length, sent: 0, failed: 0 };
+
+    // Mark campaign as active
+    await CampaignService.update(accountId, campaignId, { status: "active" });
+    await db
+      .update(campaigns)
+      .set({ startedAt: new Date() })
+      .where(eq(campaigns.id, campaignId));
+
+    const resend = new Resend(config.resendApiKey);
+    let wasAutoPaused = false;
+
+    for (const contact of contactList) {
+      // Skip unsubscribed contacts
+      if (contact.unsubscribed) {
+        progress.total--;
+        continue;
+      }
+
+      if (!contact.email) {
+        progress.failed++;
+        onProgress?.(progress);
+        continue;
+      }
+
+      try {
+        // Generate personalized email via LLM
+        const contactContext = {
+          firstName: contact.firstName ?? "",
+          lastName: contact.lastName ?? "",
+          companyName: contact.companyName ?? "",
+          businessWebsite: contact.businessWebsite ?? "",
+          city: contact.city ?? "",
+          state: contact.state ?? "",
+          email: contact.email ?? "",
+        };
+
+        const personalizedPrompt = promptTemplate.replace(
+          /\{(\w+)\}/g,
+          (match, key) => contactContext[key as keyof typeof contactContext] || match
+        );
+
+        const llmResult = await LLMService.generateEmail(accountId, llmConfig, {
+          goal: personalizedPrompt,
+          audience: `${contact.firstName || "Contact"} at ${contact.companyName || "their company"}`,
+          tone: "professional",
+          cta: "Reply to schedule a conversation",
+        });
+
+        // Extract subject from generated content (first line) or use default
+        const lines = llmResult.text.split('\n').filter(l => l.trim());
+        const subject = lines[0]?.replace(/^Subject:\s*/i, '') || "Introduction";
+        const bodyLines = lines.slice(1).filter(Boolean);
+        const bodyContent = bodyLines.length > 0 ? bodyLines.join('\n').trim() : "<p></p>";
+        const bodyHtml = CampaignService.convertPlainTextToHtml(bodyContent);
+
+        let retryCount = 0;
+        let sent = false;
+
+        while (!sent && retryCount < MAX_RETRIES) {
+          try {
+            const result = await resend.emails.send({
+              from: config.fromName
+                ? `${config.fromName} <${config.fromEmail}>`
+                : config.fromEmail,
+              to: contact.email,
+              subject: subject.slice(0, 200),
+              html: bodyHtml,
+              replyTo: config.replyTo,
+            });
+
+            // Create message instance record
+            await db.insert(messageInstances).values({
+              campaignId,
+              contactId: contact.id,
+              resendMessageId: result.data?.id ?? null,
+              subject: subject.slice(0, 200),
+              status: "sent",
+              sentAt: new Date(),
+            });
+
+            progress.sent++;
+            sent = true;
+          } catch (err) {
+            retryCount++;
+            const errorCode = CampaignService.getResendErrorCode(err);
+            const isRetryable = CampaignService.isRetryableError(errorCode);
+
+            if (isRetryable && retryCount < MAX_RETRIES) {
+              const backoffMs = Math.pow(2, retryCount - 1) * 1000;
+              await CampaignService.delay(backoffMs);
+            } else {
+              await db.insert(messageInstances).values({
+                campaignId,
+                contactId: contact.id,
+                subject: subject.slice(0, 200),
+                status: "failed",
+              });
+              progress.failed++;
+              break;
+            }
+          }
+        }
+      } catch (llmErr) {
+        // LLM generation failed - record as failed
+        progress.failed++;
+        const llmErrorMsg = llmErr instanceof Error ? llmErr.message : String(llmErr);
+        await db.insert(messageInstances).values({
+          campaignId,
+          contactId: contact.id,
+          subject: "[LLM Generation Failed]",
+          status: "failed",
+        });
+        // Helper to mask email for logging (e.g., j***@example.com)
+        const maskEmail = (email: string | null | undefined): string => {
+          if (!email) return "unknown";
+          const [local, domain] = email.split("@");
+          if (!domain) return "invalid";
+          const maskedLocal = local.charAt(0) + "***";
+          return `${maskedLocal}@${domain}`;
+        };
+
+        console.error("[CampaignService] LLM generation failed for contact", {
+          contactId: contact.id,
+          emailMasked: maskEmail(contact.email),
+          error: llmErrorMsg,
+          campaignId,
+        });
+      }
+
+      onProgress?.(progress);
+
+      // Check complaint rate periodically
+      if (progress.sent > 0 && progress.sent % 50 === 0) {
+        const shouldPause = await CampaignService.checkComplaintRate(campaignId);
+        if (shouldPause) {
+          await CampaignService.update(accountId, campaignId, { status: "paused" });
+          wasAutoPaused = true;
+          break;
+        }
+      }
+
+      // Throttle for rate limits
+      await CampaignService.delay(BATCH_SEND_DELAY_MS);
+    }
+
+    // Mark campaign status
+    if (!wasAutoPaused) {
+      const finalStatus = progress.total > 0 && progress.failed === progress.total ? "stopped" : "completed";
+      await CampaignService.update(accountId, campaignId, { status: finalStatus });
+      await db
+        .update(campaigns)
+        .set({ completedAt: new Date() })
+        .where(eq(campaigns.id, campaignId));
+    }
+
+    return progress;
+  }
+
   // === Webhook Processing ===
 
   /** Process a Resend webhook event */
@@ -485,5 +658,37 @@ export class CampaignService {
       "timeout",
     ];
     return retryableCodes.includes(errorCode.toLowerCase());
+  }
+
+  /** Convert plain text to HTML if not already HTML */
+  private static convertPlainTextToHtml(text: string): string {
+    // Check if already HTML (starts with '<' after optional whitespace)
+    const trimmed = text.trim();
+    if (trimmed.startsWith('<')) {
+      return text;
+    }
+
+    // Escape HTML special characters
+    const escaped = trimmed
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+
+    // Split into paragraphs (double newlines) and convert to <p> tags
+    const paragraphs = escaped.split(/\n\n+/).filter(p => p.trim());
+    
+    if (paragraphs.length === 0) {
+      return escaped;
+    }
+
+    // Convert single newlines to <br> within paragraphs
+    const htmlParagraphs = paragraphs.map(p => {
+      const withBreaks = p.replace(/\n/g, '<br>');
+      return `<p>${withBreaks}</p>`;
+    });
+
+    return htmlParagraphs.join('\n');
   }
 }

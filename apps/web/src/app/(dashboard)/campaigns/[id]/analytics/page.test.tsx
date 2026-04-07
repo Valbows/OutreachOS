@@ -17,6 +17,11 @@ vi.mock("@/lib/hooks/use-campaigns", () => ({
   useCampaignAnalytics: () => mockUseCampaignAnalytics(),
 }));
 
+vi.mock("@/lib/hooks/use-experiments", () => ({
+  useCampaignExperiments: () => ({ data: [], isLoading: false }),
+  useExperimentBatches: () => ({ data: [], isLoading: false }),
+}));
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockUseCampaign.mockReturnValue({ data: null, isLoading: false });

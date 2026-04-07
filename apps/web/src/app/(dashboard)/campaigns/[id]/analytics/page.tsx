@@ -2,6 +2,7 @@
 
 import { useParams, useRouter } from "next/navigation";
 import { useCampaign, useCampaignAnalytics } from "@/lib/hooks/use-campaigns";
+import { useCampaignExperiments, useExperimentBatches } from "@/lib/hooks/use-experiments";
 import { Badge } from "@/components/ui";
 
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -32,12 +33,131 @@ function HeatmapRow({ label, value, maxValue }: { label: string; value: number; 
   );
 }
 
+interface ExperimentData {
+  id: string;
+  name: string;
+  type: string;
+  status: string;
+  championVariant: string | null;
+  consecutiveWins: number | null;
+}
+
+function ExperimentCard({ experiment }: { experiment: ExperimentData }) {
+  const { data: batches } = useExperimentBatches(experiment.id);
+
+  const statusVariant =
+    experiment.status === "champion_found" ? "success"
+    : experiment.status === "production" ? "success"
+    : experiment.status === "active" ? "warning"
+    : "secondary";
+
+  return (
+    <div className="rounded-xl border border-outline-variant bg-surface-container-low p-4 space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-medium text-on-surface">{experiment.name}</h3>
+            <Badge variant={statusVariant}>{experiment.status.replaceAll("_", " ")}</Badge>
+          </div>
+          <div className="text-[10px] text-on-surface-variant mt-0.5">
+            Type: {experiment.type.replaceAll("_", " ")}
+            {experiment.championVariant && (
+              <span className="ml-2 text-primary font-medium">
+                Champion: {experiment.championVariant}
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="text-xs text-on-surface-variant">
+          {batches?.length ?? 0} batches
+        </div>
+      </div>
+
+      {/* Variant Breakdown — side-by-side A/B stats per batch */}
+      {batches && batches.length > 0 && (
+        <div className="space-y-2">
+          <div className="text-[10px] font-medium text-on-surface-variant uppercase tracking-wider">
+            Batch Results
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-outline-variant text-on-surface-variant">
+                  <th className="text-left py-1.5 pr-3 font-medium">#</th>
+                  <th className="text-left py-1.5 pr-3 font-medium">Variant A</th>
+                  <th className="text-right py-1.5 pr-3 font-medium">A Open %</th>
+                  <th className="text-left py-1.5 pr-3 font-medium">Variant B</th>
+                  <th className="text-right py-1.5 pr-3 font-medium">B Open %</th>
+                  <th className="text-center py-1.5 font-medium">Winner</th>
+                </tr>
+              </thead>
+              <tbody>
+                {batches.map((batch) => (
+                  <tr key={batch.id} className="border-b border-outline-variant/50">
+                    <td className="py-1.5 pr-3 text-on-surface-variant">{batch.batchNumber}</td>
+                    <td className="py-1.5 pr-3 text-on-surface truncate max-w-[120px]" title={batch.variantA}>
+                      {batch.variantA}
+                    </td>
+                    <td className="py-1.5 pr-3 text-right font-mono">
+                      {batch.variantAOpenRate !== null
+                        ? `${(batch.variantAOpenRate * 100).toFixed(1)}%`
+                        : "—"}
+                    </td>
+                    <td className="py-1.5 pr-3 text-on-surface truncate max-w-[120px]" title={batch.variantB}>
+                      {batch.variantB}
+                    </td>
+                    <td className="py-1.5 pr-3 text-right font-mono">
+                      {batch.variantBOpenRate !== null
+                        ? `${(batch.variantBOpenRate * 100).toFixed(1)}%`
+                        : "—"}
+                    </td>
+                    <td className="py-1.5 text-center">
+                      {batch.winner === "variant_a" && (
+                        <span className="inline-block rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">A</span>
+                      )}
+                      {batch.winner === "variant_b" && (
+                        <span className="inline-block rounded bg-tertiary/10 px-1.5 py-0.5 text-[10px] font-medium text-tertiary">B</span>
+                      )}
+                      {batch.winner === "tie" && (
+                        <span className="inline-block rounded bg-surface-container px-1.5 py-0.5 text-[10px] text-on-surface-variant">Tie</span>
+                      )}
+                      {!batch.winner && batch.evaluatedAt && (
+                        <span className="text-[10px] text-on-surface-variant">Inconclusive</span>
+                      )}
+                      {!batch.winner && !batch.evaluatedAt && (
+                        <span className="text-[10px] text-on-surface-variant">Pending</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Decision rationale for most recent evaluated batch */}
+          {(() => {
+            const lastEvaluated = [...(batches ?? [])].reverse().find((b) => b.evaluatedAt);
+            if (!lastEvaluated?.decisionRationale) return null;
+            return (
+              <div className="rounded-lg bg-surface-container p-3">
+                <div className="text-[10px] font-medium text-on-surface-variant mb-1">Latest Decision</div>
+                <div className="text-xs text-on-surface">{lastEvaluated.decisionRationale}</div>
+              </div>
+            );
+          })()}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function CampaignAnalyticsPage() {
   const router = useRouter();
   const params = useParams();
   const campaignId = typeof params.id === "string" ? params.id : Array.isArray(params.id) ? params.id[0] : "";
   const { data: campaign, isLoading: loadingCampaign } = useCampaign(campaignId);
   const { data: analytics, isLoading: loadingAnalytics } = useCampaignAnalytics(campaignId);
+  const { data: experiments } = useCampaignExperiments(campaignId);
 
   const isLoading = loadingCampaign || loadingAnalytics;
 
@@ -127,7 +247,7 @@ export default function CampaignAnalyticsPage() {
         />
       </div>
 
-      <div className="grid md:grid-cols-2 gap-6">
+      <div className="grid md:grid-cols-2 gap-6 mb-8">
         {/* Hourly Heatmap */}
         <div className="rounded-xl border border-outline-variant bg-surface-container-low p-4">
           <h3 className="text-sm font-medium text-on-surface mb-3">Opens by Hour of Day</h3>
@@ -158,6 +278,16 @@ export default function CampaignAnalyticsPage() {
           </div>
         </div>
       </div>
+
+      {/* A/B Experiment Log & Variant Breakdown */}
+      {experiments && experiments.length > 0 && (
+        <div className="space-y-6">
+          <h2 className="text-lg font-semibold text-on-surface">A/B Experiments</h2>
+          {experiments.map((exp) => (
+            <ExperimentCard key={exp.id} experiment={exp} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

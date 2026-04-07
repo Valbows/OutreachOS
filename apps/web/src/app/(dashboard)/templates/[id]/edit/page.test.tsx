@@ -47,11 +47,19 @@ vi.mock("dompurify", () => ({
   },
 }));
 
+const duplicateMutation = {
+  mutateAsync: vi.fn(),
+  isPending: false,
+  isError: false,
+  error: null,
+};
+
 vi.mock("@/lib/hooks/use-templates", () => ({
   useTemplate: () => mockUseTemplate(),
   useUpdateTemplate: () => updateMutation,
   useRewriteEmail: () => rewriteMutation,
   useGenerateSubjects: () => subjectsMutation,
+  useDuplicateTemplate: () => duplicateMutation,
 }));
 
 describe("TemplateEditorPage", () => {
@@ -134,6 +142,7 @@ describe("TemplateEditorPage", () => {
         name: "Updated Template",
         subject: "Updated subject",
         bodyHtml: "Updated body",
+        tokenFallbacks: {},
       });
     });
     expect(screen.getByRole("button", { name: /saved!/i })).toBeInTheDocument();
@@ -186,7 +195,7 @@ describe("TemplateEditorPage", () => {
 
     await user.click(screen.getByRole("button", { name: /ai workshop/i }));
     await user.type(screen.getByPlaceholderText(/make it more conversational/i), "Make it shorter");
-    await user.click(screen.getByRole("button", { name: /apply ai rewrite/i }));
+    await user.click(screen.getByRole("button", { name: /generate rewrite/i }));
 
     await waitFor(() => {
       expect(rewriteMutation.mutateAsync).toHaveBeenCalledWith({
@@ -194,6 +203,9 @@ describe("TemplateEditorPage", () => {
         instruction: "Make it shorter",
       });
     });
+
+    // Accept the pending rewrite
+    await user.click(await screen.findByRole("button", { name: /^accept$/i }));
     await waitFor(() => expect(bodyTextarea).toHaveValue("Rewritten email body"));
     expect(sanitizeMock).toHaveBeenCalled();
   });
@@ -212,7 +224,7 @@ describe("TemplateEditorPage", () => {
 
     await user.click(screen.getByRole("button", { name: /ai workshop/i }));
     await user.type(screen.getByPlaceholderText(/make it more conversational/i), "Make it shorter");
-    await user.click(screen.getByRole("button", { name: /apply ai rewrite/i }));
+    await user.click(screen.getByRole("button", { name: /generate rewrite/i }));
 
     expect(screen.getByText(/failed to generate\. check your gemini api key\./i)).toBeInTheDocument();
   });
