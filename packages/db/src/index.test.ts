@@ -158,7 +158,15 @@ describe("@outreachos/db", () => {
           createTableRelationsHelpers(dbModule.campaigns),
         ),
       ),
-    ).toEqual(["account", "template", "steps", "messages", "enrollments"]);
+    ).toEqual([
+      "account",
+      "template",
+      "steps",
+      "messages",
+      "enrollments",
+      "funnelConditions",
+      "referencedInConditions",
+    ]);
     expect(
       Object.keys(
         dbModule.campaignStepsRelations.config(

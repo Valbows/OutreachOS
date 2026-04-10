@@ -22,11 +22,14 @@
     "@google/genai": "^1.46.0",
     "@outreachos/db": "workspace:*",
     "drizzle-orm": "^0.44.0",
+    "imapflow": "^1.0.174",
     "mammoth": "^1.12.0",
+    "nodemailer": "^8.0.4",
     "resend": "^6.9.4"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
+    "@types/nodemailer": "^8.0.0",
     "tsup": "^8.0.0",
     "typescript": "5.9.2",
     "vitest": "^3.0.0"

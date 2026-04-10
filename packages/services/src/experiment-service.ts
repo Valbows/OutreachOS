@@ -10,6 +10,7 @@ import {
   messageInstances,
   emailEvents,
   contacts,
+  replies,
 } from "@outreachos/db";
 import { eq, and, desc, sql, count, not, inArray } from "drizzle-orm";
 import { Resend } from "resend";
@@ -18,10 +19,13 @@ import { TemplateService, type RenderContext } from "./template-service.js";
 const CONTACTS_PER_VARIANT = 20;
 const MIN_BATCH_SIZE = 10; // Minimum contacts per variant for statistical significance
 const SUBJECT_OPEN_RATE_THRESHOLD = 0.4; // 40% open rate to win
+const BODY_RESPONSE_RATE_THRESHOLD = 0.03; // 3% response rate to win body/CTA test
 const CONSECUTIVE_WINS_REQUIRED = 2;
+const CHALLENGER_PERCENTAGE = 0.1; // 10% of production batches use challenger variant
 
 export type ExperimentType = "subject_line" | "body_cta";
 export type ExperimentStatus = "active" | "champion_found" | "production";
+export type ExperimentPhase = "subject_line" | "body_cta" | "production";
 
 export interface CreateExperimentInput {
   accountId: string;
@@ -169,8 +173,8 @@ export class ExperimentService {
       .from(messageInstances)
       .where(eq(messageInstances.experimentBatchId, batchId));
 
-    const variantAMessages = messages.filter((m) => m.subject === batch.variantA);
-    const variantBMessages = messages.filter((m) => m.subject === batch.variantB);
+    const variantAMessages = messages.filter((m) => m.variantLabel === "A");
+    const variantBMessages = messages.filter((m) => m.variantLabel === "B");
 
     // Validate minimum sample size for statistical significance
     if (variantAMessages.length < MIN_BATCH_SIZE || variantBMessages.length < MIN_BATCH_SIZE) {
@@ -299,6 +303,244 @@ export class ExperimentService {
     return experiment.championVariant;
   }
 
+  // === Phase 5.3 — Body/CTA Testing ===
+
+  /** Evaluate a body/CTA batch using response rates instead of open rates */
+  static async evaluateBodyCTABatch(batchId: string): Promise<BatchResult> {
+    const [batch] = await db
+      .select()
+      .from(experimentBatches)
+      .where(eq(experimentBatches.id, batchId))
+      .limit(1);
+
+    if (!batch) throw new Error("Batch not found");
+
+    const messages = await db
+      .select()
+      .from(messageInstances)
+      .where(eq(messageInstances.experimentBatchId, batchId));
+
+    const variantAMessages = messages.filter((m) => m.variantLabel === "A");
+    const variantBMessages = messages.filter((m) => m.variantLabel === "B");
+
+    if (variantAMessages.length < MIN_BATCH_SIZE || variantBMessages.length < MIN_BATCH_SIZE) {
+      throw new Error(
+        `Insufficient sample size: each variant requires at least ${MIN_BATCH_SIZE} contacts. ` +
+        `Variant A: ${variantAMessages.length}, Variant B: ${variantBMessages.length}`
+      );
+    }
+
+    // For body/CTA tests, use response rate (replies) instead of open rate
+    const variantAResponseRate = await ExperimentService.computeResponseRate(variantAMessages);
+    const variantBResponseRate = await ExperimentService.computeResponseRate(variantBMessages);
+
+    let winner: "variant_a" | "variant_b" | "tie";
+    let rationale: string;
+
+    if (variantAResponseRate >= BODY_RESPONSE_RATE_THRESHOLD && variantAResponseRate > variantBResponseRate) {
+      winner = "variant_a";
+      rationale = `Variant A response rate ${(variantAResponseRate * 100).toFixed(1)}% exceeds ${BODY_RESPONSE_RATE_THRESHOLD * 100}% threshold and beats Variant B ${(variantBResponseRate * 100).toFixed(1)}%`;
+    } else if (variantBResponseRate >= BODY_RESPONSE_RATE_THRESHOLD && variantBResponseRate > variantAResponseRate) {
+      winner = "variant_b";
+      rationale = `Variant B response rate ${(variantBResponseRate * 100).toFixed(1)}% exceeds ${BODY_RESPONSE_RATE_THRESHOLD * 100}% threshold and beats Variant A ${(variantAResponseRate * 100).toFixed(1)}%`;
+    } else {
+      winner = "tie";
+      rationale = `Neither variant met the ${BODY_RESPONSE_RATE_THRESHOLD * 100}% response rate threshold. A: ${(variantAResponseRate * 100).toFixed(1)}%, B: ${(variantBResponseRate * 100).toFixed(1)}%`;
+    }
+
+    await db
+      .update(experimentBatches)
+      .set({
+        variantAResponseRate,
+        variantBResponseRate,
+        variantAOpenRate: computeOpenRate(variantAMessages),
+        variantBOpenRate: computeOpenRate(variantBMessages),
+        winner,
+        decisionRationale: rationale,
+        evaluatedAt: new Date(),
+      })
+      .where(eq(experimentBatches.id, batchId));
+
+    return {
+      batchId,
+      batchNumber: batch.batchNumber,
+      variantAOpenRate: computeOpenRate(variantAMessages),
+      variantBOpenRate: computeOpenRate(variantBMessages),
+      winner,
+      rationale,
+    };
+  }
+
+  /** Compute response rate for a set of messages by checking replies table */
+  private static async computeResponseRate(
+    messages: { id: string; contactId: string; status: string }[],
+  ): Promise<number> {
+    if (messages.length === 0) return 0;
+    const messageIds = messages.map((m) => m.id);
+
+    const [result] = await db
+      .select({ count: count() })
+      .from(replies)
+      .where(inArray(replies.messageInstanceId, messageIds));
+
+    return (result?.count ?? 0) / messages.length;
+  }
+
+  /** Transition from subject line champion to body/CTA testing phase */
+  static async transitionToBodyCTATest(
+    accountId: string,
+    campaignId: string,
+    championSubject: string,
+    bodyVariantA: string,
+    bodyVariantB: string,
+  ) {
+    return db.transaction(async (tx) => {
+      // Create a new body_cta experiment with locked champion subject
+      const [experiment] = await tx
+        .insert(experiments)
+        .values({
+          accountId,
+          campaignId,
+          name: `Body/CTA Test — ${championSubject.slice(0, 30)}...`,
+          type: "body_cta",
+          status: "active",
+          settings: {
+            lockedSubject: championSubject,
+            phase: "body_cta",
+          },
+        })
+        .returning();
+
+      // Create the first batch
+      const [batch] = await tx
+        .insert(experimentBatches)
+        .values({
+          experimentId: experiment.id,
+          batchNumber: 1,
+          variantA: bodyVariantA,
+          variantB: bodyVariantB,
+          contactsPerVariant: CONTACTS_PER_VARIANT,
+        })
+        .returning();
+
+      return { experiment, batch };
+    });
+  }
+
+  /** Enter production state — both subject + body/CTA champions confirmed */
+  static async enterProduction(
+    accountId: string,
+    experimentId: string,
+  ): Promise<{ championSubject: string; championBody: string }> {
+    const experiment = await ExperimentService.getById(accountId, experimentId);
+    if (!experiment) throw new Error("Experiment not found");
+    if (experiment.status !== "champion_found") {
+      throw new Error("Cannot enter production: no champion found");
+    }
+
+    const settings = (experiment.settings ?? {}) as Record<string, unknown>;
+    const lockedSubject = (settings.lockedSubject as string) ?? "";
+
+    // Validate lockedSubject for body/CTA experiments
+    if (experiment.type === "body_cta" && !lockedSubject) {
+      throw new Error("Cannot enter production: lockedSubject is required for body/CTA experiments");
+    }
+
+    await db
+      .update(experiments)
+      .set({
+        status: "production",
+        settings: {
+          ...settings,
+          phase: "production",
+          championSubject: lockedSubject,
+          championBody: experiment.championVariant,
+        },
+        updatedAt: new Date(),
+      })
+      .where(and(eq(experiments.id, experimentId), eq(experiments.accountId, accountId)));
+
+    return {
+      championSubject: lockedSubject,
+      championBody: experiment.championVariant ?? "",
+    };
+  }
+
+  /**
+   * Create a challenger batch for ongoing testing in production.
+   * 10% of sends use a challenger variant; 90% use the champion.
+   */
+  static async createChallengerBatch(
+    accountId: string,
+    experimentId: string,
+    challengerVariant: string,
+    totalContacts: number,
+  ): Promise<{ challengerCount: number; championCount: number; batchId: string }> {
+    const experiment = await ExperimentService.getById(accountId, experimentId);
+    if (!experiment) throw new Error("Experiment not found");
+    if (experiment.status !== "production") {
+      throw new Error("Challenger batches only allowed in production state");
+    }
+
+    if (totalContacts < 2) {
+      throw new Error(`Total contacts must be at least 2 for challenger batch, got ${totalContacts}`);
+    }
+
+    if (!experiment.championVariant) {
+      throw new Error("Cannot create challenger batch: no champion variant found");
+    }
+
+    const challengerCount = Math.min(
+      Math.max(1, Math.round(totalContacts * CHALLENGER_PERCENTAGE)),
+      totalContacts - 1,
+    );
+    const championCount = totalContacts - challengerCount;
+
+    // Atomic transaction with row lock to prevent race conditions
+    const batch = await db.transaction(async (tx) => {
+      // Lock experiment row and get championVariant within transaction
+      const [lockedExperiment] = await tx
+        .select({ id: experiments.id, championVariant: experiments.championVariant })
+        .from(experiments)
+        .where(and(eq(experiments.id, experimentId), eq(experiments.accountId, accountId)))
+        .for("update");
+
+      if (!lockedExperiment) {
+        throw new Error("Experiment not found or not authorized");
+      }
+
+      // Validate championVariant within transaction (TOCTOU fix)
+      if (!lockedExperiment.championVariant) {
+        throw new Error("Experiment has no champion variant set");
+      }
+
+      // Determine next batch number within transaction
+      const existing = await tx
+        .select()
+        .from(experimentBatches)
+        .where(eq(experimentBatches.experimentId, experimentId))
+        .orderBy(desc(experimentBatches.batchNumber))
+        .limit(1);
+
+      const nextBatchNumber = existing.length > 0 ? existing[0].batchNumber + 1 : 1;
+
+      const [newBatch] = await tx
+        .insert(experimentBatches)
+        .values({
+          experimentId,
+          batchNumber: nextBatchNumber,
+          variantA: lockedExperiment.championVariant, // Use locked value
+          variantB: challengerVariant,
+          contactsPerVariant: challengerCount,
+        })
+        .returning();
+
+      return newBatch;
+    });
+
+    return { challengerCount, championCount, batchId: batch.id };
+  }
+
   /** Send a batch of A/B test emails — splits contacts evenly between variants */
   static async sendBatch(
     accountId: string,
@@ -407,6 +649,7 @@ export class ExperimentService {
             contactId: contact.id,
             templateId: sendConfig.templateId,
             experimentBatchId: batchId,
+            variantLabel: "A",
             resendMessageId: null,
             subject: batch.variantA,
             status: "failed",
@@ -424,6 +667,7 @@ export class ExperimentService {
             contactId: contact.id,
             templateId: sendConfig.templateId,
             experimentBatchId: batchId,
+            variantLabel: "A",
             resendMessageId: result.data.id,
             subject: batch.variantA,
             status: "sent",
@@ -452,6 +696,7 @@ export class ExperimentService {
             contactId: contact.id,
             templateId: sendConfig.templateId,
             experimentBatchId: batchId,
+            variantLabel: "A",
             resendMessageId: null,
             subject: batch.variantA,
             status: "failed",
@@ -495,6 +740,7 @@ export class ExperimentService {
             contactId: contact.id,
             templateId: sendConfig.templateId,
             experimentBatchId: batchId,
+            variantLabel: "B",
             resendMessageId: null,
             subject: batch.variantB,
             status: "failed",
@@ -512,6 +758,7 @@ export class ExperimentService {
             contactId: contact.id,
             templateId: sendConfig.templateId,
             experimentBatchId: batchId,
+            variantLabel: "B",
             resendMessageId: result.data.id,
             subject: batch.variantB,
             status: "sent",

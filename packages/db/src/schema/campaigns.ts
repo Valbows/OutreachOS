@@ -30,6 +30,12 @@ export const campaigns = pgTable("campaigns", {
   startedAt: timestamp("started_at", { withTimezone: true }),
   completedAt: timestamp("completed_at", { withTimezone: true }),
   settings: jsonb("settings").$type<Record<string, unknown>>(),
+  /** Progress tracking for resumable operations (e.g., newsletter sends) */
+  progress: jsonb("progress").$type<{
+    lastProcessedContactId?: string;
+    sentCount?: number;
+    failedCount?: number;
+  }>(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
@@ -52,6 +58,7 @@ export const messageInstances = pgTable("message_instances", {
   stepId: uuid("step_id"),
   templateId: uuid("template_id"),
   experimentBatchId: uuid("experiment_batch_id"),
+  variantLabel: text("variant_label"), // "A" or "B" for experiment variant tracking
   resendMessageId: text("resend_message_id"),
   subject: text("subject"),
   status: text("status").default("pending").notNull(), // pending, sent, delivered, opened, clicked, bounced, complained, failed
@@ -108,12 +115,37 @@ export const journeyEnrollments = pgTable(
   ]
 );
 
+export const funnelConditions = pgTable("funnel_conditions", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+  conditionType: text("condition_type").notNull(), // did_not_open, opened_more_than, replied, filled_form
+  referenceCampaignId: uuid("reference_campaign_id").references(() => campaigns.id),
+  referenceFormId: uuid("reference_form_id"),
+  threshold: integer("threshold"), // e.g., 5 for "opened more than 5 times"
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const funnelConditionsRelations = relations(funnelConditions, ({ one }) => ({
+  campaign: one(campaigns, {
+    relationName: "funnelConditionCampaign",
+    fields: [funnelConditions.campaignId],
+    references: [campaigns.id],
+  }),
+  referenceCampaign: one(campaigns, {
+    relationName: "funnelConditionReferenceCampaign",
+    fields: [funnelConditions.referenceCampaignId],
+    references: [campaigns.id],
+  }),
+}));
+
 export const campaignsRelations = relations(campaigns, ({ one, many }) => ({
   account: one(accounts, { fields: [campaigns.accountId], references: [accounts.id] }),
   template: one(templates, { fields: [campaigns.templateId], references: [templates.id] }),
   steps: many(campaignSteps),
   messages: many(messageInstances),
   enrollments: many(journeyEnrollments),
+  funnelConditions: many(funnelConditions, { relationName: "funnelConditionCampaign" }),
+  referencedInConditions: many(funnelConditions, { relationName: "funnelConditionReferenceCampaign" }),
 }));
 
 export const campaignStepsRelations = relations(campaignSteps, ({ one }) => ({

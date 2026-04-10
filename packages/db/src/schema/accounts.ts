@@ -16,6 +16,7 @@ export const accounts = pgTable("accounts", {
   llmProvider: text("llm_provider").default("gemini"),
   llmModel: text("llm_model"),
   byokKeys: jsonb("byok_keys").$type<Record<string, string>>(),
+  settings: jsonb("settings").$type<Record<string, unknown>>(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });

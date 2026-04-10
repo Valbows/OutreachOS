@@ -11,6 +11,7 @@ import {
   campaigns
 } from "@outreachos/db";
 import { eq, and, isNotNull, desc, count } from "drizzle-orm";
+import { ImapFlow } from "imapflow";
 
 export interface ImapConfig {
   host: string;
@@ -18,6 +19,9 @@ export interface ImapConfig {
   user: string;
   password: string;
   tls?: boolean;
+  /** When true (default), TLS will reject invalid/self-signed certificates.
+   *  Set to false to allow self-signed certificates (less secure). */
+  rejectUnauthorized?: boolean;
 }
 
 export interface SmtpConfig {
@@ -247,22 +251,298 @@ export class InboxService {
     return null;
   }
 
-  /** Fetch unseen emails from IMAP — abstracted for testing */
-  static async fetchUnseenEmails(_config: ImapConfig): Promise<ParsedEmail[]> {
-    // In production, this uses node-imap to connect and fetch
-    // For now, return empty array — actual IMAP implementation
-    // requires the node-imap package and runtime Node.js environment
-    //
-    // Production implementation:
-    // 1. Connect to IMAP server with config
-    // 2. Open INBOX
-    // 3. Search for UNSEEN messages since last poll
-    // 4. Fetch headers (Message-ID, In-Reply-To, References, From, Subject, Date)
-    // 5. Fetch body preview (first 500 chars)
-    // 6. Mark as SEEN
-    // 7. Close connection
-    console.warn("InboxService.fetchUnseenEmails: IMAP not yet connected — returning empty");
-    return [];
+  /** Fetch unseen emails from IMAP via ImapFlow */
+  static async fetchUnseenEmails(config: ImapConfig): Promise<ParsedEmail[]> {
+    const client = new ImapFlow({
+      host: config.host,
+      port: config.port,
+      secure: config.tls ?? true,
+      auth: {
+        user: config.user,
+        pass: config.password,
+      },
+      tls: {
+        rejectUnauthorized: config.rejectUnauthorized ?? true,
+      },
+      connectionTimeout: 15000,
+      greetingTimeout: 10000,
+    });
+
+    try {
+      await client.connect();
+      const lock = await client.getMailboxLock("INBOX");
+      
+      try {
+        const emails: ParsedEmail[] = [];
+        const uids = await client.search({ seen: false });
+        
+        if (!uids || uids.length === 0) return [];
+
+        for (const uid of uids) {
+          try {
+            const message = await client.fetchOne(uid.toString(), {
+              headers: ["message-id", "in-reply-to", "references", "from", "subject", "date"],
+              bodyParts: ["TEXT"],
+            });
+
+            if (!message) continue;
+
+            // Handle headers that may be Map, Buffer, or plain object
+            const rawHeaders = message.headers;
+            let headers: Map<string, string>;
+            
+            if (rawHeaders instanceof Map) {
+              headers = rawHeaders;
+            } else if (Buffer.isBuffer(rawHeaders)) {
+              // Parse Buffer headers into Map
+              headers = InboxService.parseHeadersToMap(rawHeaders.toString());
+            } else if (rawHeaders && typeof rawHeaders === 'object') {
+              // Convert plain object to Map
+              headers = new Map(Object.entries(rawHeaders as Record<string, string>));
+            } else {
+              // Unexpected type - log warning and use empty Map
+              const msgId = (message as { id?: string; uid?: number }).uid || (message as { id?: string; uid?: number }).id || 'unknown';
+              console.warn(
+                `[InboxService] Unexpected headers type: ${typeof rawHeaders} for message ${msgId}`
+              );
+              headers = new Map<string, string>();
+            }
+            const body = message.bodyParts?.get("TEXT")?.toString().slice(0, 500) ?? "";
+
+            emails.push({
+              messageId: headers.get("message-id") ?? "",
+              inReplyTo: headers.get("in-reply-to"),
+              references: (headers.get("references") ?? "").split(/\s+/).filter(Boolean),
+              from: headers.get("from") ?? "",
+              subject: headers.get("subject") ?? "",
+              bodyPreview: body,
+              date: InboxService.parseDate(headers.get("date")),
+            });
+          } catch (msgErr) {
+            console.error(`[InboxService] Error fetching message ${uid}:`, msgErr);
+          }
+        }
+
+        return emails;
+      } finally {
+        lock.release();
+      }
+    } finally {
+      await client.logout();
+    }
+  }
+
+  /** Parse raw IMAP header block into key-value pairs */
+  private static parseHeadersToMap(raw: string): Map<string, string> {
+    const headers: Record<string, string> = {};
+    const lines = raw.split(/\r?\n/);
+    let currentKey = "";
+    for (const line of lines) {
+      if (/^\s/.test(line) && currentKey) {
+        headers[currentKey] += " " + line.trim();
+      } else {
+        const match = line.match(/^([^:]+):\s*(.*)/);
+        if (match) {
+          currentKey = match[1].toLowerCase();
+          headers[currentKey] = match[2].trim();
+        }
+      }
+    }
+    return new Map(Object.entries(headers));
+  }
+
+  /** Parse date string with validation, returns current date if invalid */
+  private static parseDate(dateStr: string | undefined): Date {
+    if (!dateStr) return new Date();
+    const parsed = new Date(dateStr);
+    return isNaN(parsed.getTime()) ? new Date() : parsed;
+  }
+
+  /** Apply a Gmail label to matched reply messages (via IMAP COPY) */
+  static async applyGmailLabel(
+    config: ImapConfig,
+    messageIds: string[],
+    labelName: string = "leads",
+  ): Promise<number> {
+    if (messageIds.length === 0) return 0;
+
+    const client = new ImapFlow({
+      host: config.host,
+      port: config.port,
+      secure: config.tls ?? true,
+      auth: {
+        user: config.user,
+        pass: config.password,
+      },
+      tls: {
+        rejectUnauthorized: config.rejectUnauthorized ?? true,
+      },
+    });
+
+    try {
+      await client.connect();
+      const lock = await client.getMailboxLock("INBOX");
+      
+      try {
+        let labeled = 0;
+        // Gmail exposes labels as IMAP folders
+        const gmailLabel = `[Gmail]/${labelName}`;
+
+        for (const mid of messageIds) {
+          try {
+            // Search for message by Message-ID header
+            const seqs = await client.search({ header: { "message-id": mid } });
+            if (!seqs || seqs.length === 0) continue;
+            
+            // Fetch to get UID (more stable than sequence numbers)
+            const seq = seqs[0];
+            const msg = await client.fetchOne(seq.toString(), { uid: true });
+            if (!msg || typeof msg !== 'object') continue;
+            
+            // Access uid through type assertion (ImapFlow doesn't expose it in types)
+            const uid = (msg as { uid?: number }).uid;
+            if (!uid) continue;
+            
+            try {
+              await client.messageCopy(uid.toString(), gmailLabel, { uid: true });
+              labeled++;
+            } catch (copyErr) {
+              console.error(`[InboxService] Failed to label message ${mid}:`, copyErr);
+            }
+          } catch (fetchErr) {
+            console.error(`[InboxService] Failed to fetch message ${mid}:`, fetchErr);
+          }
+        }
+
+        return labeled;
+      } finally {
+        lock.release();
+      }
+    } finally {
+      await client.logout();
+    }
+  }
+
+  /** Copy matched messages to a destination folder (non-Gmail IMAP) */
+  static async copyToFolder(
+    config: ImapConfig,
+    messageIds: string[],
+    destinationFolder: string,
+  ): Promise<number> {
+    if (messageIds.length === 0) return 0;
+
+    const client = new ImapFlow({
+      host: config.host,
+      port: config.port,
+      secure: config.tls ?? true,
+      auth: {
+        user: config.user,
+        pass: config.password,
+      },
+      tls: {
+        rejectUnauthorized: config.rejectUnauthorized ?? true,
+      },
+    });
+
+    try {
+      await client.connect();
+      const lock = await client.getMailboxLock("INBOX");
+      
+      try {
+        let copied = 0;
+
+        for (const mid of messageIds) {
+          try {
+            // Search for message by Message-ID header
+            const seqs = await client.search({ header: { "message-id": mid } });
+            if (!seqs || seqs.length === 0) continue;
+            
+            // Fetch to get UID (more stable than sequence numbers)
+            const seq = seqs[0];
+            const msg = await client.fetchOne(seq.toString(), { uid: true });
+            if (!msg || typeof msg !== 'object') continue;
+            
+            // Access uid through type assertion (ImapFlow doesn't expose it in types)
+            const uid = (msg as { uid?: number }).uid;
+            if (!uid) continue;
+            
+            try {
+              await client.messageCopy(uid.toString(), destinationFolder, { uid: true });
+              copied++;
+            } catch (copyErr) {
+              console.error(`[InboxService] Failed to copy message ${mid}:`, copyErr);
+            }
+          } catch (fetchErr) {
+            console.error(`[InboxService] Failed to fetch message ${mid}:`, fetchErr);
+          }
+        }
+
+        return copied;
+      } finally {
+        lock.release();
+      }
+    } finally {
+      await client.logout();
+    }
+  }
+
+  /**
+   * Full poll workflow: fetch → match → persist → label/copy.
+   * Called by the Vercel Cron endpoint every 5 minutes.
+   */
+  static async pollAndProcess(
+    accountId: string,
+    config: ImapConfig,
+    options?: {
+      gmailLabel?: string;
+      destinationFolder?: string;
+      isGmail?: boolean;
+    },
+  ): Promise<PollResult & { labeled: number }> {
+    const result = await InboxService.pollForReplies(accountId, config);
+    let labeled = 0;
+
+    // Collect matched message IDs for labeling/copying
+    if (result.matched > 0 && options) {
+      const recentReplies = await db
+        .select({ imapMessageId: replies.imapMessageId })
+        .from(replies)
+        .innerJoin(campaigns, eq(replies.campaignId, campaigns.id))
+        .where(eq(campaigns.accountId, accountId))
+        .orderBy(desc(replies.createdAt))
+        .limit(result.matched);
+
+      const messageIds = recentReplies
+        .map((r) => r.imapMessageId)
+        .filter((id): id is string => id !== null);
+
+      if (messageIds.length > 0) {
+        try {
+          if (options.isGmail && options.gmailLabel) {
+            labeled = await InboxService.applyGmailLabel(config, messageIds, options.gmailLabel);
+          } else if (options.destinationFolder) {
+            labeled = await InboxService.copyToFolder(config, messageIds, options.destinationFolder);
+          }
+        } catch (err) {
+          console.error("[InboxService] Label/copy error:", err);
+        }
+      }
+    }
+
+    return { ...result, labeled };
+  }
+
+  /** Update response rate for a campaign based on reply count */
+  static async getResponseRate(campaignId: string): Promise<number> {
+    const [[replyResult], [sentResult]] = await Promise.all([
+      db.select({ count: count() }).from(replies).where(eq(replies.campaignId, campaignId)),
+      db.select({ count: count() }).from(messageInstances).where(
+        and(eq(messageInstances.campaignId, campaignId), isNotNull(messageInstances.sentAt)),
+      ),
+    ]);
+    const replyCount = replyResult?.count ?? 0;
+    const sentCount = sentResult?.count ?? 0;
+    return sentCount > 0 ? replyCount / sentCount : 0;
   }
 
   /** Get reply history for a contact */

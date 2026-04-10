@@ -421,4 +421,85 @@ export class FormService {
       { type: "side_drawer", label: "Side Drawer" },
     ];
   }
+
+  // === Form-to-Automation (Phase 5.6) ===
+
+  /** Map a form to a journey or funnel for automatic enrollment on submission */
+  static async mapToAutomation(
+    accountId: string,
+    formId: string,
+    automation: { journeyId?: string; funnelId?: string },
+  ) {
+    const form = await FormService.getById(accountId, formId);
+    if (!form) throw new Error("Form not found");
+
+    const [updated] = await db
+      .update(formTemplates)
+      .set({
+        journeyId: automation.journeyId ?? form.journeyId,
+        funnelId: automation.funnelId ?? form.funnelId,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(formTemplates.id, formId),
+          eq(formTemplates.accountId, accountId),
+        ),
+      )
+      .returning();
+
+    return updated;
+  }
+
+  /** Get the automation mapping for a form */
+  static async getAutomationMapping(accountId: string, formId: string) {
+    const form = await FormService.getById(accountId, formId);
+    if (!form) return null;
+
+    return {
+      formId: form.id,
+      journeyId: form.journeyId,
+      funnelId: form.funnelId,
+    };
+  }
+
+  /**
+   * Process automation after form submission.
+   * Called after submit() — enrolls the contact in the mapped journey/funnel.
+   * Returns the automation actions taken.
+   */
+  static async processAutomation(
+    accountId: string,
+    formId: string,
+    contactId: string,
+  ): Promise<{ enrolled: string[] }> {
+    const form = await FormService.getById(accountId, formId);
+    if (!form) return { enrolled: [] };
+
+    const enrolled: string[] = [];
+
+    // Enroll in journey if mapped
+    if (form.journeyId) {
+      try {
+        const { JourneyService } = await import("./journey-service.js");
+        await JourneyService.enrollGroup(form.journeyId, [{ id: contactId }]);
+        enrolled.push(`journey:${form.journeyId}`);
+      } catch (err) {
+        console.error(`[FormService] Journey enrollment error for form ${formId}:`, err);
+      }
+    }
+
+    // Enroll in funnel if mapped
+    if (form.funnelId) {
+      try {
+        const { FunnelService } = await import("./funnel-service.js");
+        await FunnelService.enrollQualifyingContacts(accountId, form.funnelId, [contactId]);
+        enrolled.push(`funnel:${form.funnelId}`);
+      } catch (err) {
+        console.error(`[FormService] Funnel enrollment error for form ${formId}:`, err);
+      }
+    }
+
+    return { enrolled };
+  }
 }

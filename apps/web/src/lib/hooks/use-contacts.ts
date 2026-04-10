@@ -30,6 +30,7 @@ export interface ContactGroup {
   id: string;
   name: string;
   description: string | null;
+  contactCount?: number;
   createdAt: string;
 }
 

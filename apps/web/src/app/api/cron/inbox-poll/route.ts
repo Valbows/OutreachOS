@@ -40,13 +40,23 @@ export async function GET(request: NextRequest) {
 
     for (const account of configuredAccounts) {
       try {
-        const result = await InboxService.pollForReplies(account.id, {
-          host: account.imapHost!,
-          port: account.imapPort ?? 993,
-          user: account.imapUser!,
-          password: account.imapPassword!,
-          tls: true,
-        });
+        const settings = (account.settings ?? {}) as Record<string, unknown>;
+        const isGmail = String(account.imapHost ?? "").includes("gmail");
+        const result = await InboxService.pollAndProcess(
+          account.id,
+          {
+            host: account.imapHost!,
+            port: account.imapPort ?? 993,
+            user: account.imapUser!,
+            password: account.imapPassword!,
+            tls: true,
+          },
+          {
+            isGmail,
+            gmailLabel: isGmail ? (settings.gmailLabel as string) ?? "leads" : undefined,
+            destinationFolder: !isGmail ? (settings.destinationFolder as string) ?? undefined : undefined,
+          },
+        );
         results.push({ accountId: account.id, ...result });
       } catch (err) {
         console.error(`IMAP poll error for account ${account.id}:`, err);

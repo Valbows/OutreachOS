@@ -143,3 +143,72 @@ export function useCampaignAnalytics(campaignId: string) {
     enabled: !!campaignId,
   });
 }
+
+// === Funnel Hooks (Phase 5) ===
+
+export function useCreateFunnel() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: {
+      name: string;
+      groupId: string;
+      conditions: Array<{
+        conditionType: string;
+        referenceCampaignId?: string;
+        referenceFormId?: string;
+        threshold?: number;
+      }>;
+      steps: Array<{
+        name: string;
+        templateId: string;
+        delayDays: number;
+        delayHour?: number;
+      }>;
+    }) => {
+      const res = await fetch("/api/campaigns/funnel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) {
+        // Read body once as text, then attempt JSON parsing
+        const body = await res.text();
+        let errorMessage: string;
+        try {
+          const json = JSON.parse(body);
+          errorMessage = json.error || `Failed to create funnel (${res.status})`;
+        } catch {
+          // Fallback for non-JSON responses (e.g., HTML error pages)
+          errorMessage = body || `Failed to create funnel (${res.status}: ${res.statusText})`;
+        }
+        throw new Error(errorMessage);
+      }
+      return res.json();
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["campaigns"] }),
+  });
+}
+
+export function useFunnel(funnelId: string) {
+  return useQuery({
+    queryKey: ["funnels", funnelId],
+    queryFn: async () => {
+      const res = await fetch(`/api/campaigns/funnel/${funnelId}`);
+      if (!res.ok) throw new Error("Failed to fetch funnel");
+      return res.json();
+    },
+    enabled: !!funnelId,
+  });
+}
+
+export function useFunnelProgress(funnelId: string) {
+  return useQuery({
+    queryKey: ["funnels", funnelId, "progress"],
+    queryFn: async () => {
+      const res = await fetch(`/api/campaigns/funnel/${funnelId}/progress`);
+      if (!res.ok) throw new Error("Failed to fetch funnel progress");
+      return res.json();
+    },
+    enabled: !!funnelId,
+  });
+}
