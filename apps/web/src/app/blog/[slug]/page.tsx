@@ -3,6 +3,8 @@ import { BlogService } from "@outreachos/services";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import DOMPurify from "isomorphic-dompurify";
+import { NewsletterSubscribe } from "@/components/features/newsletter-subscribe";
+import { buildBlogTitle, buildBlogDescription } from "../seo";
 
 export const revalidate = 60;
 
@@ -19,12 +21,14 @@ export async function generateMetadata({
   const { slug } = await params;
   const post = await BlogService.getBySlug(slug);
   if (!post) return {};
+  const title = buildBlogTitle(post.title);
+  const description = buildBlogDescription(post.metaDescription, null);
   return {
-    title: post.title,
-    description: post.metaDescription ?? undefined,
+    title,
+    description,
     openGraph: {
-      title: post.title,
-      description: post.metaDescription ?? undefined,
+      title,
+      description,
       images: post.ogImage ? [post.ogImage] : undefined,
       type: "article",
       publishedTime: post.publishedAt ? new Date(post.publishedAt).toISOString() : undefined,
@@ -83,6 +87,13 @@ export default async function BlogPostPage({
             className="prose prose-invert max-w-none text-on-surface prose-headings:text-on-surface prose-a:text-primary prose-strong:text-on-surface prose-code:text-primary"
             dangerouslySetInnerHTML={{ __html: sanitizedContent }}
           />
+          <div className="mt-12">
+            <NewsletterSubscribe
+              accountId={post.accountId}
+              heading="Get future posts in your inbox"
+              description="Subscribe for new OutreachOS articles, product updates, and outreach tips."
+            />
+          </div>
         </article>
       </main>
     </div>

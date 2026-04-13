@@ -718,3 +718,109 @@ Comprehensive accessibility audit and fixes across all Phase 2 UI components to 
 - Stripe integration requires webhook endpoint for subscription events
 - Webhook delivery worker should run as background job (Vercel Cron or separate worker)
 - Rate limiting uses in-memory store — production should use Redis for distributed rate limiting
+
+## Phase 5/6 Stabilization — 2026-04-12
+
+### Scope
+- Cleared the remaining TypeScript failures blocking `pnpm type-check` across `apps/web` route tests, API routes, and the contacts dashboard icon typing.
+- Wired public form submissions to execute mapped journey/funnel automation after contact creation or lookup.
+- Implemented the funnel `filled_form` condition by matching submitted form contacts through `form_submissions`.
+- Fixed newsletter merge-token rendering to use the correct template context keys and corrected final total accounting for resumed sends.
+- Added a dedicated preferences API (`/api/settings/preferences`) and connected the settings page to both preferences and BYOK persistence.
+- Embedded the newsletter subscribe widget directly on public blog post pages.
+- Added regression coverage for the preferences route and LLM auto-fallback routing.
+
+### Validation
+- `pnpm type-check` — **passes**.
+- `pnpm --filter @outreachos/web test:unit -- src/app/api/settings/byok/route.test.ts src/app/api/settings/preferences/route.test.ts` — **passes** (web suite completed cleanly, 503 tests).
+- `pnpm --filter @outreachos/services test:unit -- src/llm-service.test.ts` — **passes** (services suite completed cleanly, 103 tests).
+
+### Remaining Gaps
+- Settings now supports per-account LLM preference and BYOK management, but plan items that depend on external Stitch generation, deployment, or broader quota-metering policy remain separate follow-up work.
+- Phase 5/6 still have larger end-to-end and integration checklist items that were not part of this stabilization pass.
+
+## Phase 5.8 Newsletter Send Flow — 2026-04-12
+
+### Scope
+Implemented the three core newsletter features from Phase 5.8:
+
+1. **Rich Newsletter Templates**
+   - Added `templateType` field to `templates` table (`simple`, `rich`, `newsletter`)
+   - Implemented `renderRichNewsletter()` with HTML email wrapper, responsive layout, and styled blog embed section
+   - Updated `send()` method to auto-detect rich templates and use rich rendering
+
+2. **Recurring Newsletter Scheduling**
+   - Added `recurrence` field to `campaigns` table (`none`, `weekly`, `monthly`)
+   - Added `lastSentAt` field for tracking send history
+   - Implemented `schedule()` for one-off scheduled sends
+   - Implemented `setupRecurringSchedule()` for configuring recurrence
+   - Implemented `processRecurringNewsletters()` cron job handler that clones completed newsletters for next occurrence
+   - Updated `/api/cron/newsletter-send` to process recurring newsletters after sends complete
+
+3. **Blog Content Embedding**
+   - Added `embedBlogPosts` setting to newsletter configuration
+   - Implemented `getLatestBlogPosts()` to fetch recent published posts
+   - Rich newsletters automatically render blog section with title, excerpt, and link when `embedBlogPosts > 0`
+
+### Files Modified
+- `packages/db/src/schema/campaigns.ts` — Added `templateType`, `recurrence`, `lastSentAt` fields
+- `packages/services/src/newsletter-service.ts` — Added rich rendering, blog embedding, recurring scheduling methods
+- `apps/web/src/app/api/cron/newsletter-send/route.ts` — Added recurring newsletter processing
+- `outreachos-implementation-plan.md` — Marked 5.8 items complete
+
+### Validation
+- `pnpm type-check` — **passes** across all packages
+- Schema changes are backward compatible (new fields have defaults)
+- Rich rendering gracefully falls back to simple rendering for legacy templates
+
+## Phase 5.9 Testing — 2026-04-12
+
+### Scope
+Implemented comprehensive test coverage for Phase 5 features:
+
+1. **Unit Tests: JourneyService, FunnelService, InboxService, FormService**
+   - `journey-service.test.ts`: 6 tests covering journey CRUD, enrollment, state machine, step configuration
+   - `funnel-service.test.ts`: 10 tests covering funnel CRUD, condition evaluation, entry conditions
+   - `inbox-service.test.ts`: 19 tests covering IMAP config, reply matching, email parsing, Gmail labeling
+   - `form-service.test.ts`: 18 tests covering form CRUD, submissions, embed code generation, automation mapping
+
+2. **Integration Test: Form → Contact → Funnel → Email**
+   - `packages/services/src/integration/form-to-funnel.test.ts`: 10 tests
+   - Tests complete workflow: form submission → contact creation/matching → funnel enrollment → email scheduling
+   - Covers error handling, data consistency, custom field preservation
+
+3. **E2E Test: Journey Flow with Mocked IMAP**
+   - `packages/services/src/e2e/journey-flow.test.ts`: 8 tests
+   - Simulates complete journey lifecycle: enrollment → sends → reply detection → removal/completion
+   - Tests IMAP reply matching strategies (In-Reply-To, References, sender email)
+   - Covers error recovery and state progression
+
+4. **Reply Detection Accuracy Tests**
+   - `inbox-service.reply-detection.test.ts`: 25 tests
+   - Tests In-Reply-To header matching precision
+   - Tests References header chain matching
+   - Tests sender email fallback matching
+   - Covers edge cases: special characters, circular references, malformed headers
+   - Includes precision/recall metrics calculations
+
+5. **Blog SEO Tests**
+   - `apps/web/src/app/blog/seo.test.tsx`: Tests for meta tags, OG images, sitemap
+   - Verifies title/description generation, canonical URLs
+   - Tests Open Graph and Twitter Card tags
+   - Tests JSON-LD structured data, RSS feed format
+   - Validates sitemap XML structure and pagination
+
+### Files Created
+- `packages/services/src/journey-service.test.ts` (6 tests)
+- `packages/services/src/funnel-service.test.ts` (10 tests)
+- `packages/services/src/inbox-service.test.ts` (19 tests)
+- `packages/services/src/inbox-service.reply-detection.test.ts` (25 tests)
+- `packages/services/src/form-service.test.ts` (18 tests)
+- `packages/services/src/integration/form-to-funnel.test.ts` (10 tests)
+- `packages/services/src/e2e/journey-flow.test.ts` (8 tests)
+- `apps/web/src/app/blog/seo.test.tsx` (SEO verification tests)
+
+### Validation
+- `pnpm --filter @outreachos/services test:unit` — **199 tests passing**
+- All new test files pass with mocked database dependencies
+- `outreachos-implementation-plan.md` — Phase 5.9 marked complete

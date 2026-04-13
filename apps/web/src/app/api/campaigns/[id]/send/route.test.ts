@@ -67,8 +67,8 @@ describe("POST /api/campaigns/[id]/send", () => {
   it("streams progress and final result", async () => {
     vi.mocked(getAuthAccount).mockResolvedValueOnce(createMockAccount());
     vi.mocked(CampaignService.sendCampaign).mockImplementationOnce(async (_accountId, _id, _config, onProgress) => {
-      onProgress({ sent: 1, total: 3 });
-      return { sent: 3, failed: 0 } as any;
+      onProgress?.({ sent: 1, failed: 0, total: 3 });
+      return { sent: 3, failed: 0, total: 3 };
     });
 
     const response = await POST(

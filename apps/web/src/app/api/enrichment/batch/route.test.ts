@@ -61,7 +61,7 @@ describe("POST /api/enrichment/batch", () => {
   it("streams progress and final result", async () => {
     vi.mocked(getAuthAccount).mockResolvedValueOnce(createMockAccount());
     vi.mocked(EnrichmentService.batchEnrich).mockImplementationOnce(async (_accountId, _config, _groupId, onProgress) => {
-      onProgress({ processed: 1, total: 2 });
+      onProgress?.({ processed: 1, total: 2, found: 1, verified: 1 });
       return { enriched: 2, skipped: 0 } as any;
     });
 

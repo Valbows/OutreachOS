@@ -36,7 +36,7 @@ describe("GET /api/blog/[slug]", () => {
   });
 
   it("returns 404 when post not found", async () => {
-    vi.mocked(BlogService.getBySlug).mockResolvedValueOnce(null);
+    vi.mocked(BlogService.getBySlug).mockResolvedValueOnce(null as any);
 
     const response = await GET(createMockRequest("http://localhost/api/blog/not-found"), { params });
 
@@ -83,7 +83,7 @@ describe("PATCH /api/blog/[slug]", () => {
 
   it("returns 404 when post not found", async () => {
     vi.mocked(getAuthAccount).mockResolvedValueOnce(createMockAccount());
-    vi.mocked(BlogService.update).mockResolvedValueOnce(null);
+    vi.mocked(BlogService.update).mockResolvedValueOnce(null as any);
 
     const response = await PATCH(
       createMockRequest("http://localhost/api/blog/hello-world", {

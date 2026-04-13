@@ -5,6 +5,20 @@ import { Card, CardHeader, CardTitle, CardContent, Input, Button, Modal, Select,
 import { authClient } from "@/lib/auth/client";
 
 type SettingsTab = "profile" | "inbox" | "notifications" | "danger";
+type LLMProvider = "gemini" | "openrouter";
+
+type PreferencesResponse = {
+  data: {
+    llmProvider: LLMProvider;
+    llmModel: string;
+    senderDomain: string;
+  };
+};
+
+type ByokResponse = {
+  providers: Record<string, boolean>;
+  message?: string;
+};
 
 const tabs: { id: SettingsTab; label: string; icon: React.ReactNode }[] = [
   { id: "profile", label: "Profile", icon: <ProfileIcon /> },
@@ -275,6 +289,91 @@ function ProfileSection() {
 function InboxSection() {
   const [oauthPending, setOauthPending] = useState(false);
   const [oauthError, setOauthError] = useState<string | null>(null);
+  const [preferencesLoading, setPreferencesLoading] = useState(true);
+  const [preferencesSaving, setPreferencesSaving] = useState(false);
+  const [preferencesError, setPreferencesError] = useState<string | null>(null);
+  const [preferencesSuccess, setPreferencesSuccess] = useState<string | null>(null);
+  const [llmProvider, setLlmProvider] = useState<LLMProvider>("gemini");
+  const [llmModel, setLlmModel] = useState("");
+  const [senderDomain, setSenderDomain] = useState("");
+  const [byokLoading, setByokLoading] = useState(true);
+  const [byokSaving, setByokSaving] = useState(false);
+  const [byokError, setByokError] = useState<string | null>(null);
+  const [byokSuccess, setByokSuccess] = useState<string | null>(null);
+  const [configuredProviders, setConfiguredProviders] = useState<Record<string, boolean>>({});
+  const [byokValues, setByokValues] = useState({
+    hunter: "",
+    resend: "",
+    gemini: "",
+    openrouter: "",
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadSettings() {
+      const results = await Promise.allSettled([
+        fetch("/api/settings/preferences"),
+        fetch("/api/settings/byok"),
+      ]);
+
+      if (cancelled) return;
+
+      const [preferencesResult, byokResult] = results;
+
+      // --- preferences ---
+      try {
+        if (preferencesResult.status === "rejected") {
+          throw preferencesResult.reason as Error;
+        }
+        const res = preferencesResult.value;
+        if (!res.ok) throw new Error("Failed to load AI preferences");
+        const data = (await res.json()) as PreferencesResponse;
+        if (!cancelled) {
+          setLlmProvider(data.data.llmProvider ?? "gemini");
+          setLlmModel(data.data.llmModel ?? "");
+          setSenderDomain(data.data.senderDomain ?? "");
+          setPreferencesError(null);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setPreferencesError(
+            error instanceof Error ? error.message : "Failed to load AI preferences",
+          );
+        }
+      } finally {
+        if (!cancelled) setPreferencesLoading(false);
+      }
+
+      // --- BYOK ---
+      try {
+        if (byokResult.status === "rejected") {
+          throw byokResult.reason as Error;
+        }
+        const res = byokResult.value;
+        if (!res.ok) throw new Error("Failed to load BYOK settings");
+        const data = (await res.json()) as ByokResponse;
+        if (!cancelled) {
+          setConfiguredProviders(data.providers ?? {});
+          setByokError(null);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setByokError(
+            error instanceof Error ? error.message : "Failed to load BYOK settings",
+          );
+        }
+      } finally {
+        if (!cancelled) setByokLoading(false);
+      }
+    }
+
+    void loadSettings();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handleGoogleConnect() {
     setOauthPending(true);
@@ -288,6 +387,70 @@ function InboxSection() {
     } catch (error) {
       setOauthError("Failed to connect Google account. Please try again.");
       setOauthPending(false);
+    }
+  }
+
+  async function handlePreferencesSave() {
+    setPreferencesSaving(true);
+    setPreferencesError(null);
+    setPreferencesSuccess(null);
+
+    try {
+      const response = await fetch("/api/settings/preferences", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          llmProvider,
+          llmModel,
+          senderDomain,
+        }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.error ?? "Failed to save preferences");
+      }
+
+      setLlmProvider(data.data.llmProvider ?? llmProvider);
+      setLlmModel(data.data.llmModel ?? "");
+      setSenderDomain(data.data.senderDomain ?? "");
+      setPreferencesSuccess(data.message ?? "Preferences updated");
+    } catch (error) {
+      setPreferencesError(error instanceof Error ? error.message : "Failed to save preferences");
+    } finally {
+      setPreferencesSaving(false);
+    }
+  }
+
+  function handleByokValueChange(provider: keyof typeof byokValues, value: string) {
+    setByokValues((current) => ({ ...current, [provider]: value }));
+    setByokSuccess(null);
+  }
+
+  async function handleByokSave() {
+    setByokSaving(true);
+    setByokError(null);
+    setByokSuccess(null);
+
+    try {
+      const response = await fetch("/api/settings/byok", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(byokValues),
+      });
+
+      const data = (await response.json().catch(() => ({}))) as ByokResponse & { error?: string };
+      if (!response.ok) {
+        throw new Error(data.error ?? "Failed to save BYOK keys");
+      }
+
+      setConfiguredProviders(data.providers ?? {});
+      setByokValues({ hunter: "", resend: "", gemini: "", openrouter: "" });
+      setByokSuccess(data.message ?? "BYOK keys updated");
+    } catch (error) {
+      setByokError(error instanceof Error ? error.message : "Failed to save BYOK keys");
+    } finally {
+      setByokSaving(false);
     }
   }
 
@@ -351,13 +514,52 @@ function InboxSection() {
           <CardTitle>AI Model Preference</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <Select label="Primary LLM Provider" defaultValue="gemini">
+          {preferencesError && (
+            <div className="px-4 py-3 bg-error-container/20 border border-error/20 rounded-[var(--radius-input)] text-sm text-error">
+              {preferencesError}
+            </div>
+          )}
+          {preferencesSuccess && (
+            <div className="px-4 py-3 bg-secondary/10 border border-secondary/20 rounded-[var(--radius-input)] text-sm text-secondary">
+              {preferencesSuccess}
+            </div>
+          )}
+          <Select
+            label="Primary LLM Provider"
+            value={llmProvider}
+            onChange={(e) => {
+              setLlmProvider(e.target.value as LLMProvider);
+              setPreferencesSuccess(null);
+            }}
+            disabled={preferencesLoading || preferencesSaving}
+          >
             <option value="gemini">Gemini 2.5 Pro (default)</option>
             <option value="openrouter">OpenRouter (auto-route)</option>
           </Select>
-          <Input label="Default Sender Domain" placeholder="outreach.yourcompany.com" />
+          <Input
+            label="Per-account Model Override"
+            placeholder={llmProvider === "openrouter" ? "anthropic/claude-3.5-sonnet" : "gemini-2.5-flash"}
+            value={llmModel}
+            onChange={(e) => {
+              setLlmModel(e.target.value);
+              setPreferencesSuccess(null);
+            }}
+            disabled={preferencesLoading || preferencesSaving}
+          />
+          <Input
+            label="Default Sender Domain"
+            placeholder="outreach.yourcompany.com"
+            value={senderDomain}
+            onChange={(e) => {
+              setSenderDomain(e.target.value);
+              setPreferencesSuccess(null);
+            }}
+            disabled={preferencesLoading || preferencesSaving}
+          />
           <div className="flex justify-end">
-            <Button>Save Preferences</Button>
+            <Button onClick={handlePreferencesSave} disabled={preferencesLoading || preferencesSaving}>
+              {preferencesSaving ? "Saving..." : "Save Preferences"}
+            </Button>
           </div>
         </CardContent>
       </Card>
@@ -368,15 +570,69 @@ function InboxSection() {
           <CardTitle>BYOK — Bring Your Own Keys</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          {byokError && (
+            <div className="px-4 py-3 bg-error-container/20 border border-error/20 rounded-[var(--radius-input)] text-sm text-error">
+              {byokError}
+            </div>
+          )}
+          {byokSuccess && (
+            <div className="px-4 py-3 bg-secondary/10 border border-secondary/20 rounded-[var(--radius-input)] text-sm text-secondary">
+              {byokSuccess}
+            </div>
+          )}
           <p className="text-xs text-outline mb-2">
             Keys are AES-256 encrypted at rest. Raw keys are never logged.
           </p>
-          <Input label="Hunter.io API Key" type="password" placeholder="Enter key or leave blank for platform key" />
-          <Input label="Resend API Key" type="password" placeholder="Enter key or leave blank for platform key" />
-          <Input label="Gemini API Key" type="password" placeholder="Enter key or leave blank for platform key" />
-          <Input label="OpenRouter API Key" type="password" placeholder="Enter key or leave blank for platform key" />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Input
+              label="Hunter.io API Key"
+              type="password"
+              placeholder="Enter key or leave blank for platform key"
+              value={byokValues.hunter}
+              onChange={(e) => handleByokValueChange("hunter", e.target.value)}
+              disabled={byokLoading || byokSaving}
+            />
+            <div className="text-xs text-on-surface-variant self-end md:pb-3">
+              {configuredProviders.hunter ? "Configured" : "Using platform default"}
+            </div>
+            <Input
+              label="Resend API Key"
+              type="password"
+              placeholder="Enter key or leave blank for platform key"
+              value={byokValues.resend}
+              onChange={(e) => handleByokValueChange("resend", e.target.value)}
+              disabled={byokLoading || byokSaving}
+            />
+            <div className="text-xs text-on-surface-variant self-end md:pb-3">
+              {configuredProviders.resend ? "Configured" : "Using platform default"}
+            </div>
+            <Input
+              label="Gemini API Key"
+              type="password"
+              placeholder="Enter key or leave blank for platform key"
+              value={byokValues.gemini}
+              onChange={(e) => handleByokValueChange("gemini", e.target.value)}
+              disabled={byokLoading || byokSaving}
+            />
+            <div className="text-xs text-on-surface-variant self-end md:pb-3">
+              {configuredProviders.gemini ? "Configured" : "Using platform default"}
+            </div>
+            <Input
+              label="OpenRouter API Key"
+              type="password"
+              placeholder="Enter key or leave blank for platform key"
+              value={byokValues.openrouter}
+              onChange={(e) => handleByokValueChange("openrouter", e.target.value)}
+              disabled={byokLoading || byokSaving}
+            />
+            <div className="text-xs text-on-surface-variant self-end md:pb-3">
+              {configuredProviders.openrouter ? "Configured" : "Using platform default"}
+            </div>
+          </div>
           <div className="flex justify-end">
-            <Button>Save Keys</Button>
+            <Button onClick={handleByokSave} disabled={byokLoading || byokSaving}>
+              {byokSaving ? "Saving..." : "Save Keys"}
+            </Button>
           </div>
         </CardContent>
       </Card>

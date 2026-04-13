@@ -17,7 +17,7 @@ import { TemplateService, type RenderContext } from "./template-service.js";
 import { Resend } from "resend";
 
 // Journey states (linear progression)
-const JOURNEY_STATES = [
+export const JOURNEY_STATES = [
   "enrolled",
   "initial_sent",
   "first_followup_sent",
@@ -29,7 +29,7 @@ const JOURNEY_STATES = [
 export type JourneyState = (typeof JOURNEY_STATES)[number] | "removed";
 
 // Step name → state after sending
-const STEP_STATE_MAP: Record<string, JourneyState> = {
+export const STEP_STATE_MAP: Record<string, JourneyState> = {
   "Initial": "initial_sent",
   "1st Follow Up": "first_followup_sent",
   "2nd Follow Up": "second_followup_sent",
@@ -77,6 +77,10 @@ export class JourneyService {
 
   /** Create a journey campaign with steps */
   static async create(input: CreateJourneyInput) {
+    if (!input.accountId.trim() || !input.name.trim()) {
+      throw new Error("Invalid journey input");
+    }
+
     return db.transaction(async (tx) => {
       const [journeyCampaign] = await tx
         .insert(campaigns)

@@ -54,7 +54,28 @@ export async function POST(request: NextRequest) {
       form.accountId,
     );
 
-    return NextResponse.json({ data: result }, { status: 201 });
+    let automation: { enrolled: string[] } = { enrolled: [] };
+    if (result.contactId) {
+      try {
+        automation = await FormService.processAutomation(
+          form.accountId,
+          parsed.data.formId,
+          result.contactId,
+        );
+      } catch (automationError) {
+        console.error("Form automation error:", {
+          error: automationError,
+          formId: parsed.data.formId,
+          accountId: form.accountId,
+          contactId: result.contactId,
+        });
+      }
+    }
+
+    return NextResponse.json(
+      { data: { ...result, automation } },
+      { status: 201 },
+    );
   } catch (error) {
     console.error("Form submit error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

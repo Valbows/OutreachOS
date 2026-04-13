@@ -14,6 +14,8 @@ import {
   contacts,
   templates,
   replies,
+  formSubmissions,
+  formTemplates,
 } from "@outreachos/db";
 import { eq, and, asc, desc, count, sql, inArray, isNotNull, lte } from "drizzle-orm";
 import { TemplateService, type RenderContext } from "./template-service.js";
@@ -212,7 +214,7 @@ export class FunnelService {
 
   /** Evaluate a single condition against a list of contact IDs */
   private static async evaluateSingleCondition(
-    _accountId: string,
+    accountId: string,
     conditionType: ConditionType,
     referenceCampaignId: string | null,
     referenceFormId: string | null,
@@ -273,14 +275,22 @@ export class FunnelService {
 
       case "filled_form": {
         if (!referenceFormId) return contactIds;
-        // NOT IMPLEMENTED: Form-to-funnel enrollment logic is not yet implemented.
-        // Returning empty array to prevent unexpected enrollments.
-        console.warn(
-          `[FunnelService] filled_form condition not implemented. ` +
-          `referenceFormId=${referenceFormId}, contactIds.length=${contactIds.length}. ` +
-          `Returning empty array to prevent unexpected enrollments.`
-        );
-        return [];
+        const submitted = await db
+          .select({ contactId: formSubmissions.contactId })
+          .from(formSubmissions)
+          .innerJoin(formTemplates, eq(formSubmissions.formId, formTemplates.id))
+          .where(
+            and(
+              eq(formSubmissions.formId, referenceFormId),
+              eq(formTemplates.accountId, accountId),
+              isNotNull(formSubmissions.contactId),
+              inArray(formSubmissions.contactId, contactIds),
+            ),
+          )
+          .groupBy(formSubmissions.contactId);
+        return submitted
+          .map((row) => row.contactId)
+          .filter((contactId): contactId is string => Boolean(contactId));
       }
 
       default:

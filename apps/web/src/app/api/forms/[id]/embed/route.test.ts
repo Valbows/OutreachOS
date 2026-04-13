@@ -37,7 +37,7 @@ describe("GET /api/forms/[id]/embed", () => {
 
   it("returns 404 when the form does not exist", async () => {
     vi.mocked(getAuthAccount).mockResolvedValueOnce(createMockAccount());
-    vi.mocked(FormService.getById).mockResolvedValueOnce(null);
+    vi.mocked(FormService.getById).mockResolvedValueOnce(null as any);
 
     const response = await GET(createMockRequest("http://localhost/api/forms/form_1/embed"), { params });
 
@@ -46,7 +46,7 @@ describe("GET /api/forms/[id]/embed", () => {
 
   it("returns the generated embed codes", async () => {
     vi.mocked(getAuthAccount).mockResolvedValueOnce(createMockAccount());
-    vi.mocked(FormService.getById).mockResolvedValueOnce({ id: "form_1" });
+    vi.mocked(FormService.getById).mockResolvedValueOnce({ id: "form_1" } as any);
 
     const response = await GET(createMockRequest("http://localhost/api/forms/form_1/embed"), { params });
     const data = await response.json();

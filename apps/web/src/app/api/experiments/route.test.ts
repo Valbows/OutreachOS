@@ -84,7 +84,7 @@ describe("POST /api/experiments", () => {
 
   it("returns 403 when campaign not found", async () => {
     vi.mocked(getAuthAccount).mockResolvedValueOnce(createMockAccount());
-    vi.mocked(CampaignService.getById).mockResolvedValueOnce(null);
+    vi.mocked(CampaignService.getById).mockResolvedValueOnce(null as any);
 
     const response = await POST(
       createMockRequest("http://localhost/api/experiments", {

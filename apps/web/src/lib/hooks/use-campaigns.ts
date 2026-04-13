@@ -52,6 +52,48 @@ interface AnalyticsData {
   daily: DailyMetric[];
 }
 
+interface FunnelCondition {
+  id: string;
+  campaignId: string;
+  conditionType: string;
+  referenceCampaignId: string | null;
+  referenceFormId: string | null;
+  threshold: number | null;
+  createdAt: string;
+}
+
+interface FunnelStep {
+  id: string;
+  campaignId: string;
+  stepNumber: number;
+  name: string;
+  templateId: string | null;
+  delayDays: number | null;
+  delayHour: number | null;
+  createdAt: string;
+}
+
+interface Funnel {
+  id: string;
+  name: string;
+  type: string;
+  status: string;
+  groupId: string | null;
+  settings: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
+  conditions: FunnelCondition[];
+  steps: FunnelStep[];
+}
+
+interface FunnelProgress {
+  totalEnrolled: number;
+  active: number;
+  completed: number;
+  removed: number;
+  byStatus: Record<string, number>;
+}
+
 export function useCampaigns(status?: string) {
   const params = new URLSearchParams();
   if (status) params.set("status", status);
@@ -190,24 +232,26 @@ export function useCreateFunnel() {
 }
 
 export function useFunnel(funnelId: string) {
-  return useQuery({
+  return useQuery<Funnel>({
     queryKey: ["funnels", funnelId],
     queryFn: async () => {
       const res = await fetch(`/api/campaigns/funnel/${funnelId}`);
       if (!res.ok) throw new Error("Failed to fetch funnel");
-      return res.json();
+      const json = await res.json();
+      return json.data;
     },
     enabled: !!funnelId,
   });
 }
 
 export function useFunnelProgress(funnelId: string) {
-  return useQuery({
+  return useQuery<FunnelProgress>({
     queryKey: ["funnels", funnelId, "progress"],
     queryFn: async () => {
       const res = await fetch(`/api/campaigns/funnel/${funnelId}/progress`);
       if (!res.ok) throw new Error("Failed to fetch funnel progress");
-      return res.json();
+      const json = await res.json();
+      return json.data;
     },
     enabled: !!funnelId,
   });

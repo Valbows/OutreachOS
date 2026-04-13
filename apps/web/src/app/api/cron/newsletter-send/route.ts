@@ -77,9 +77,19 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // Process recurring newsletters after sends complete
+    let recurringResults = [];
+    try {
+      recurringResults = await NewsletterService.processRecurringNewsletters();
+    } catch (recurringError) {
+      console.error("Failed to process recurring newsletters:", recurringError);
+      // Don't fail the whole cron job if recurring processing fails
+    }
+
     return NextResponse.json({
       data: results,
       dueFound: dueNewsletters.length,
+      recurringProcessed: recurringResults.length,
     });
   } catch (error) {
     console.error("Newsletter cron error:", error);

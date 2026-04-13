@@ -565,7 +565,7 @@ export class InboxService {
   }
 
   /** Extract email address from a "Name <email>" string */
-  private static extractEmail(from: string): string | null {
+  static extractEmail(from: string): string | null {
     const match = from.match(/<([^>]+)>/);
     if (match) return match[1];
     // If no angle brackets, check if it's a bare email

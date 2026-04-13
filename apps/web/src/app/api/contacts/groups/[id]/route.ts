@@ -77,7 +77,6 @@ export async function PATCH(
       .set({
         ...(name !== undefined && { name: name.trim() }),
         ...(description !== undefined && { description: description?.trim() || null }),
-        updatedAt: new Date(),
       })
       .where(and(eq(contactGroups.id, id), eq(contactGroups.accountId, account.id)))
       .returning();

@@ -791,9 +791,16 @@ function UploadIcon() {
   );
 }
 
-function PlusIcon() {
+function PlusIcon({ className }: { className?: string }) {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="text-on-surface-variant">
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+      className={className ?? "text-on-surface-variant"}
+    >
       <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" fill="currentColor" />
     </svg>
   );

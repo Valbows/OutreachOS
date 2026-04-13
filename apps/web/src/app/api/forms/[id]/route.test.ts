@@ -34,7 +34,7 @@ describe("GET /api/forms/[id]", () => {
 
   it("returns 404 when the form does not exist", async () => {
     vi.mocked(getAuthAccount).mockResolvedValueOnce(createMockAccount());
-    vi.mocked(FormService.getById).mockResolvedValueOnce(null);
+    vi.mocked(FormService.getById).mockResolvedValueOnce(null as any);
 
     const response = await GET(createMockRequest("http://localhost/api/forms/form_1"), { params });
 
@@ -43,7 +43,7 @@ describe("GET /api/forms/[id]", () => {
 
   it("returns the form when found", async () => {
     vi.mocked(getAuthAccount).mockResolvedValueOnce(createMockAccount());
-    vi.mocked(FormService.getById).mockResolvedValueOnce({ id: "form_1", name: "Signup" });
+    vi.mocked(FormService.getById).mockResolvedValueOnce({ id: "form_1", name: "Signup" } as any);
 
     const response = await GET(createMockRequest("http://localhost/api/forms/form_1"), { params });
     const data = await response.json();
@@ -84,7 +84,7 @@ describe("PATCH /api/forms/[id]", () => {
 
   it("returns 404 when updating a missing form", async () => {
     vi.mocked(getAuthAccount).mockResolvedValueOnce(createMockAccount());
-    vi.mocked(FormService.update).mockResolvedValueOnce(null);
+    vi.mocked(FormService.update).mockResolvedValueOnce(null as any);
     const request = createMockRequest("http://localhost/api/forms/form_1", {
       method: "PATCH",
       body: JSON.stringify({ name: "Updated" }),
@@ -97,7 +97,7 @@ describe("PATCH /api/forms/[id]", () => {
 
   it("updates the form when payload is valid", async () => {
     vi.mocked(getAuthAccount).mockResolvedValueOnce(createMockAccount());
-    vi.mocked(FormService.update).mockResolvedValueOnce({ id: "form_1", name: "Updated" });
+    vi.mocked(FormService.update).mockResolvedValueOnce({ id: "form_1", name: "Updated" } as any);
     const request = createMockRequest("http://localhost/api/forms/form_1", {
       method: "PATCH",
       body: JSON.stringify({ name: "Updated", redirectUrl: "http://localhost/thanks" }),

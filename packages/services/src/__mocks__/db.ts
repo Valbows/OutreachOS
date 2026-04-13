@@ -26,3 +26,27 @@ export const contacts = {};
 export const contactGroups = {};
 export const contactGroupMembers = {};
 export const accounts = {};
+export const formTemplates = { id: {}, accountId: {}, journeyId: {}, funnelId: {}, submissionCount: {} };
+export const formSubmissions = { id: {}, formId: {}, contactId: {} };
+export const campaigns = { id: {}, accountId: {}, type: {}, status: {} };
+export const campaignSteps = { id: {}, campaignId: {} };
+export const journeyEnrollments = { id: {}, campaignId: {}, contactId: {} };
+export const funnelConditions = { id: {}, campaignId: {} };
+export const messageInstances = { id: {}, campaignId: {}, contactId: {} };
+export const replies = { id: {}, contactId: {}, campaignId: {}, imapMessageId: {} };
+export const emailEvents = { id: {}, campaignId: {}, contactId: {} };
+export const blogPosts = { id: {}, accountId: {}, slug: {}, title: {}, publishedAt: {} };
+export const templates = { id: {}, accountId: {}, templateType: {} };
+
+// Re-export drizzle-orm functions
+export const eq = vi.fn(() => ({}));
+export const and = vi.fn(() => ({}));
+export const or = vi.fn(() => ({}));
+export const desc = vi.fn(() => ({}));
+export const asc = vi.fn(() => ({}));
+export const count = vi.fn(() => ({}));
+export const sql = vi.fn((strings: TemplateStringsArray, ...values: unknown[]) => ({}));
+export const inArray = vi.fn(() => ({}));
+export const isNull = vi.fn(() => ({}));
+export const isNotNull = vi.fn(() => ({}));
+export const lte = vi.fn(() => ({}));

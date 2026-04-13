@@ -12,6 +12,8 @@ export const templates = pgTable("templates", {
   bodyText: text("body_text"),
   tokens: jsonb("tokens").$type<string[]>(),
   tokenFallbacks: jsonb("token_fallbacks").$type<Record<string, string>>(),
+  /** Template type: simple, rich, newsletter */
+  templateType: text("template_type").default("simple").notNull(),
   version: integer("version").default(1).notNull(),
   parentTemplateId: uuid("parent_template_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -36,6 +38,10 @@ export const campaigns = pgTable("campaigns", {
     sentCount?: number;
     failedCount?: number;
   }>(),
+  /** Recurrence for newsletters: none, weekly, monthly */
+  recurrence: text("recurrence").default("none").notNull(),
+  /** Last time this recurring newsletter was sent (for calculating next) */
+  lastSentAt: timestamp("last_sent_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
