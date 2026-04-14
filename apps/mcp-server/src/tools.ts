@@ -475,6 +475,28 @@ export function registerTools(server: McpServer, sessionId: string): number {
 
   count++;
   server.tool(
+    "record_linkedin_response",
+    "Record a response received for a LinkedIn outreach (enables future copy optimization)",
+    {
+      playbook_id: z.string().uuid().describe("LinkedIn playbook entry ID"),
+      response_text: z.string().min(1).describe("The response text received"),
+      outcome: z.enum(["positive", "negative", "neutral"]).optional().describe("Outcome classification"),
+      account_id: z.string().uuid().optional(),
+    },
+    async ({ playbook_id, response_text, outcome, account_id }) => {
+      const id = requireAccountId(sessionId, account_id);
+      try {
+        const updated = await LinkedInService.recordResponse(id, playbook_id, response_text, outcome ?? "neutral");
+        return { content: [{ type: "text", text: JSON.stringify(updated, null, 2) }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Failed to record response";
+        return { content: [{ type: "text", text: msg }], isError: true };
+      }
+    },
+  );
+
+  count++;
+  server.tool(
     "get_linkedin_playbook",
     "Get LinkedIn playbook entries for the account",
     {

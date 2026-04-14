@@ -2,6 +2,9 @@ import { pgTable, uuid, text, timestamp, integer, jsonb, real } from "drizzle-or
 import { relations } from "drizzle-orm";
 import { accounts } from "./accounts.js";
 
+/** Outcome type for LinkedIn response classification */
+export type ResponseOutcome = "positive" | "negative" | "neutral";
+
 export const linkedinPlaybooks = pgTable("linkedin_playbooks", {
   id: uuid("id").defaultRandom().primaryKey(),
   accountId: uuid("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),
@@ -10,6 +13,12 @@ export const linkedinPlaybooks = pgTable("linkedin_playbooks", {
   prompt: text("prompt"),
   generatedCopy: text("generated_copy"),
   status: text("status").default("draft").notNull(),
+  /** Stored response data for ML optimization (response text, outcome, etc.) */
+  responseData: jsonb("response_data").$type<{
+    lastResponse?: string;
+    lastOutcome?: ResponseOutcome;
+    responses?: Array<{ text: string; outcome: ResponseOutcome; receivedAt: string }>;
+  }>(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull().$onUpdate(() => new Date()),
 });

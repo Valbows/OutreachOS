@@ -50,6 +50,7 @@ vi.mock("@outreachos/db", () => ({
   },
   accounts: {
     id: "id",
+    name: "name",
     email: "email",
   },
 }));

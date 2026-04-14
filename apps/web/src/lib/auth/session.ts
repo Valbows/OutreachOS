@@ -2,7 +2,13 @@ import { auth } from "@/lib/auth/server";
 import { db, accounts } from "@outreachos/db";
 import { eq } from "drizzle-orm";
 
-export type Account = typeof accounts.$inferSelect;
+export type Account = Pick<typeof accounts.$inferSelect, "id" | "name" | "email">;
+
+const authAccountSelection = {
+  id: accounts.id,
+  name: accounts.name,
+  email: accounts.email,
+} as const;
 
 /**
  * Get the authenticated user's session and account from the database.
@@ -16,7 +22,7 @@ export async function getAuthAccount(): Promise<Account | null> {
   if (!email) return null;
 
   const [existing] = await db
-    .select()
+    .select(authAccountSelection)
     .from(accounts)
     .where(eq(accounts.email, email))
     .limit(1);
@@ -30,12 +36,12 @@ export async function getAuthAccount(): Promise<Account | null> {
       .insert(accounts)
       .values({ name, email })
       .onConflictDoNothing({ target: accounts.email })
-      .returning();
+      .returning(authAccountSelection);
 
     // In case of a race condition where another request already inserted
     if (!created) {
       const [raced] = await db
-        .select()
+        .select(authAccountSelection)
         .from(accounts)
         .where(eq(accounts.email, email))
         .limit(1);

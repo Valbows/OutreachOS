@@ -10,6 +10,24 @@ const preferencesSchema = z.object({
   senderDomain: z.string().max(255).nullable().optional(),
 });
 
+async function getAccountPreferences(accountId: string) {
+  const [record] = await db
+    .select({
+      llmProvider: accounts.llmProvider,
+      llmModel: accounts.llmModel,
+      senderDomain: accounts.senderDomain,
+    })
+    .from(accounts)
+    .where(eq(accounts.id, accountId))
+    .limit(1);
+
+  return {
+    llmProvider: record?.llmProvider ?? "gemini",
+    llmModel: record?.llmModel ?? "",
+    senderDomain: record?.senderDomain ?? "",
+  };
+}
+
 export async function GET() {
   try {
     const account = await getAuthAccount();
@@ -17,12 +35,10 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const preferences = await getAccountPreferences(account.id);
+
     return NextResponse.json({
-      data: {
-        llmProvider: account.llmProvider ?? "gemini",
-        llmModel: account.llmModel ?? "",
-        senderDomain: account.senderDomain ?? "",
-      },
+      data: preferences,
     });
   } catch (error) {
     console.error("Preferences get error:", error);
@@ -52,20 +68,22 @@ export async function PUT(request: NextRequest) {
       );
     }
 
+    const currentPreferences = await getAccountPreferences(account.id);
+
     const nextValues = {
-      llmProvider: parsed.data.llmProvider ?? account.llmProvider ?? "gemini",
+      llmProvider: parsed.data.llmProvider ?? currentPreferences.llmProvider,
       llmModel:
         "llmModel" in parsed.data
           ? parsed.data.llmModel === null
             ? null
             : (parsed.data.llmModel?.trim() || null)
-          : account.llmModel,
+          : (currentPreferences.llmModel || null),
       senderDomain:
         "senderDomain" in parsed.data
           ? parsed.data.senderDomain === null
             ? null
             : (parsed.data.senderDomain?.trim() || null)
-          : account.senderDomain,
+          : (currentPreferences.senderDomain || null),
     };
 
     await db
@@ -78,7 +96,14 @@ export async function PUT(request: NextRequest) {
       })
       .where(eq(accounts.id, account.id));
 
-    return NextResponse.json({ data: nextValues, message: "Preferences updated" });
+    return NextResponse.json({
+      data: {
+        llmProvider: nextValues.llmProvider,
+        llmModel: nextValues.llmModel ?? "",
+        senderDomain: nextValues.senderDomain ?? "",
+      },
+      message: "Preferences updated",
+    });
   } catch (error) {
     console.error("Preferences update error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

@@ -9,8 +9,10 @@ export const db = {
   insert: vi.fn().mockReturnThis(),
   update: vi.fn().mockReturnThis(),
   delete: vi.fn().mockReturnThis(),
+  transaction: vi.fn(async (callback: (tx: typeof db) => Promise<unknown>) => callback(db)),
   from: vi.fn().mockReturnThis(),
   where: vi.fn().mockReturnThis(),
+  for: vi.fn().mockReturnThis(),
   orderBy: vi.fn().mockReturnThis(),
   limit: vi.fn().mockReturnThis(),
   offset: vi.fn().mockReturnThis(),
@@ -25,7 +27,7 @@ export const db = {
 export const contacts = {};
 export const contactGroups = {};
 export const contactGroupMembers = {};
-export const accounts = {};
+export const accounts = { id: {} };
 export const formTemplates = { id: {}, accountId: {}, journeyId: {}, funnelId: {}, submissionCount: {} };
 export const formSubmissions = { id: {}, formId: {}, contactId: {} };
 export const campaigns = { id: {}, accountId: {}, type: {}, status: {} };
@@ -36,6 +38,8 @@ export const messageInstances = { id: {}, campaignId: {}, contactId: {} };
 export const replies = { id: {}, contactId: {}, campaignId: {}, imapMessageId: {} };
 export const emailEvents = { id: {}, campaignId: {}, contactId: {} };
 export const blogPosts = { id: {}, accountId: {}, slug: {}, title: {}, publishedAt: {} };
+export const linkedinPlaybooks = { id: {}, accountId: {}, contactId: {}, groupId: {}, prompt: {}, generatedCopy: {}, status: {}, responseData: {}, createdAt: {}, updatedAt: {} };
+export const llmUsageLog = { id: {}, accountId: {}, provider: {}, model: {}, purpose: {}, inputTokens: {}, outputTokens: {}, latencyMs: {}, createdAt: {} };
 export const templates = { id: {}, accountId: {}, templateType: {} };
 
 // Re-export drizzle-orm functions

@@ -300,6 +300,59 @@ export class LinkedInService {
     return entry ?? null;
   }
 
+  /**
+   * Record a LinkedIn response for an existing playbook entry.
+   * Enables future optimization by storing response text and outcome.
+   */
+  static async recordResponse(
+    accountId: string,
+    playbookId: string,
+    responseText: string,
+    outcome: "positive" | "negative" | "neutral" = "neutral",
+  ): Promise<PlaybookEntry> {
+    const [existing] = await db
+      .select()
+      .from(linkedinPlaybooks)
+      .where(and(eq(linkedinPlaybooks.id, playbookId), eq(linkedinPlaybooks.accountId, accountId)))
+      .limit(1);
+
+    if (!existing) {
+      throw new Error("PLAYBOOK_NOT_FOUND: LinkedIn playbook entry not found");
+    }
+
+    const currentResponseData = existing.responseData ?? {};
+    const previousResponses = currentResponseData.responses ?? [];
+
+    const newResponseData = {
+      lastResponse: responseText,
+      lastOutcome: outcome,
+      responses: [
+        ...previousResponses,
+        {
+          text: responseText,
+          outcome,
+          receivedAt: new Date().toISOString(),
+        },
+      ],
+    };
+
+    const [updated] = await db
+      .update(linkedinPlaybooks)
+      .set({
+        status: "responded",
+        responseData: newResponseData,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(linkedinPlaybooks.id, playbookId), eq(linkedinPlaybooks.accountId, accountId)))
+      .returning();
+
+    if (!updated) {
+      throw new Error("PLAYBOOK_NOT_FOUND: LinkedIn playbook entry not found");
+    }
+
+    return updated;
+  }
+
   /** Update playbook status (e.g., mark as "sent") */
   static async updateStatus(
     accountId: string,
@@ -369,10 +422,12 @@ export class LinkedInService {
     }
 
     // Fall back to platform environment keys
+    let usingPlatformKey = false;
     if (!apiKey) {
       apiKey = provider === "gemini"
         ? process.env.GEMINI_API_KEY
         : process.env.OPENROUTER_API_KEY;
+      if (apiKey) usingPlatformKey = true;
     }
     if (!fallbackApiKey) {
       fallbackApiKey = process.env.OPENROUTER_API_KEY;
@@ -388,6 +443,7 @@ export class LinkedInService {
       provider,
       fallbackApiKey,
       routingMode: "auto",
+      usingPlatformKey,
     };
   }
 }

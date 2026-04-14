@@ -1,12 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createMockAccount, createMockRequest } from "@/test/api-helpers";
 
-const { mockGetAuthAccount, mockDbUpdate } = vi.hoisted(() => {
+const { mockGetAuthAccount, mockDbSelect, mockDbUpdate } = vi.hoisted(() => {
   const mockGetAuthAccount = vi.fn();
-  const mockWhere = vi.fn().mockResolvedValue(undefined);
-  const mockSet = vi.fn().mockReturnValue({ where: mockWhere });
+
+  // Mock for db.select (used by getAccountPreferences)
+  const mockLimit = vi.fn().mockResolvedValue([{ llmProvider: "gemini", llmModel: null, senderDomain: null }]);
+  const mockWhereSelect = vi.fn().mockReturnValue({ limit: mockLimit });
+  const mockFrom = vi.fn().mockReturnValue({ where: mockWhereSelect });
+  const mockDbSelect = vi.fn().mockReturnValue({ from: mockFrom });
+
+  // Mock for db.update
+  const mockWhereUpdate = vi.fn().mockResolvedValue(undefined);
+  const mockSet = vi.fn().mockReturnValue({ where: mockWhereUpdate });
   const mockDbUpdate = vi.fn().mockReturnValue({ set: mockSet });
-  return { mockGetAuthAccount, mockDbUpdate };
+
+  return { mockGetAuthAccount, mockDbSelect, mockDbUpdate };
 });
 
 vi.mock("@/lib/auth/session", () => ({
@@ -14,8 +23,8 @@ vi.mock("@/lib/auth/session", () => ({
 }));
 
 vi.mock("@outreachos/db", () => ({
-  db: { update: mockDbUpdate },
-  accounts: { id: "id" },
+  db: { select: mockDbSelect, update: mockDbUpdate },
+  accounts: { id: "id", llmProvider: "llmProvider", llmModel: "llmModel", senderDomain: "senderDomain" },
 }));
 
 vi.mock("drizzle-orm", () => ({
@@ -28,6 +37,11 @@ describe("GET /api/settings/preferences", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetAuthAccount.mockResolvedValue(createMockAccount());
+    // Reset select mock to return default preferences
+    const mockLimit = vi.fn().mockResolvedValue([{ llmProvider: "gemini", llmModel: null, senderDomain: null }]);
+    const mockWhereSelect = vi.fn().mockReturnValue({ limit: mockLimit });
+    const mockFrom = vi.fn().mockReturnValue({ where: mockWhereSelect });
+    mockDbSelect.mockReturnValue({ from: mockFrom });
   });
 
   it("returns 401 when not authenticated", async () => {
@@ -37,13 +51,15 @@ describe("GET /api/settings/preferences", () => {
   });
 
   it("returns current preference values", async () => {
-    mockGetAuthAccount.mockResolvedValueOnce(
-      createMockAccount({
-        llmProvider: "openrouter",
-        llmModel: "openai/gpt-4o-mini",
-        senderDomain: "mail.example.com",
-      } as any),
-    );
+    mockGetAuthAccount.mockResolvedValueOnce(createMockAccount());
+
+    // Configure mockDbSelect to return custom preference values
+    const mockLimit = vi.fn().mockResolvedValue([
+      { llmProvider: "openrouter", llmModel: "openai/gpt-4o-mini", senderDomain: "mail.example.com" },
+    ]);
+    const mockWhereSelect = vi.fn().mockReturnValue({ limit: mockLimit });
+    const mockFrom = vi.fn().mockReturnValue({ where: mockWhereSelect });
+    mockDbSelect.mockReturnValue({ from: mockFrom });
 
     const response = await GET();
     const data = await response.json();
@@ -61,6 +77,11 @@ describe("PUT /api/settings/preferences", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetAuthAccount.mockResolvedValue(createMockAccount());
+    // Reset select mock to return default preferences
+    const mockLimit = vi.fn().mockResolvedValue([{ llmProvider: "gemini", llmModel: null, senderDomain: null }]);
+    const mockWhereSelect = vi.fn().mockReturnValue({ limit: mockLimit });
+    const mockFrom = vi.fn().mockReturnValue({ where: mockWhereSelect });
+    mockDbSelect.mockReturnValue({ from: mockFrom });
   });
 
   it("returns 401 when not authenticated", async () => {

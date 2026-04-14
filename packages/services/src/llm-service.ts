@@ -5,12 +5,27 @@
  */
 
 import { GoogleGenAI } from "@google/genai";
-import { db, llmUsageLog } from "@outreachos/db";
+import { accounts, db, llmUsageLog } from "@outreachos/db";
+import { eq, gte, sql, and } from "drizzle-orm";
 
 const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
 const DEFAULT_OPENROUTER_MODEL = "google/gemini-2.5-flash";
 const MAX_OUTPUT_TOKENS = 4096;
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+
+/** Monthly platform-key token quota per account (input + output tokens combined) */
+const PLATFORM_MONTHLY_TOKEN_QUOTA = (() => {
+  const raw = process.env.PLATFORM_MONTHLY_TOKEN_QUOTA ?? "500000";
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(
+      `Invalid PLATFORM_MONTHLY_TOKEN_QUOTA value "${raw}". Must be a non-negative number.`,
+    );
+  }
+  return Math.floor(parsed);
+})();
+const PLATFORM_QUOTA_RESERVATION_PROVIDER = "platform_quota_reservation";
+const PLATFORM_QUOTA_RESERVATION_MODEL = "quota_reservation";
 
 export type LLMProvider = "gemini" | "openrouter";
 export type RoutingMode = "auto" | "manual";
@@ -21,6 +36,8 @@ export interface LLMConfig {
   provider?: LLMProvider;
   fallbackApiKey?: string;
   routingMode?: RoutingMode;
+  /** True when using the platform-managed key (enables quota enforcement) */
+  usingPlatformKey?: boolean;
 }
 
 export interface GenerateEmailOptions {
@@ -140,12 +157,15 @@ export class LLMService {
   ): Promise<LLMResponse> {
     const provider = config.provider ?? "gemini";
     const routingMode = config.routingMode ?? "auto";
+    const quotaReservationId = config.usingPlatformKey
+      ? await LLMService.reservePlatformQuota(accountId, prompt, purpose)
+      : undefined;
 
     try {
       if (provider === "openrouter") {
-        return await LLMService.generateViaOpenRouter(accountId, config, prompt, purpose);
+        return await LLMService.generateViaOpenRouter(accountId, config, prompt, purpose, quotaReservationId);
       }
-      return await LLMService.generateViaGemini(accountId, config, prompt, purpose);
+      return await LLMService.generateViaGemini(accountId, config, prompt, purpose, quotaReservationId);
     } catch (err) {
       // Auto-fallback to OpenRouter if Gemini fails and fallback key available
       if (provider === "gemini" && routingMode === "auto" && config.fallbackApiKey) {
@@ -155,9 +175,91 @@ export class LLMService {
           apiKey: config.fallbackApiKey,
           provider: "openrouter",
         };
-        return LLMService.generateViaOpenRouter(accountId, fallbackConfig, prompt, purpose);
+        try {
+          return await LLMService.generateViaOpenRouter(accountId, fallbackConfig, prompt, purpose, quotaReservationId);
+        } catch (fallbackErr) {
+          if (quotaReservationId) {
+            await LLMService.releasePlatformQuotaReservation(quotaReservationId);
+          }
+          throw fallbackErr;
+        }
+      }
+      if (quotaReservationId) {
+        await LLMService.releasePlatformQuotaReservation(quotaReservationId);
       }
       throw err;
+    }
+  }
+
+  private static async reservePlatformQuota(
+    accountId: string,
+    prompt: string,
+    purpose: string,
+  ): Promise<string> {
+    const monthStart = new Date();
+    monthStart.setUTCDate(1);
+    monthStart.setUTCHours(0, 0, 0, 0);
+    const reservedInputTokens = Math.max(Buffer.byteLength(prompt, "utf8"), 256);
+    const reservedOutputTokens = MAX_OUTPUT_TOKENS;
+    const reservedTotalTokens = reservedInputTokens + reservedOutputTokens;
+
+    return db.transaction(async (tx) => {
+      const [account] = await tx
+        .select({ id: accounts.id })
+        .from(accounts)
+        .where(eq(accounts.id, accountId))
+        .for("update");
+
+      if (!account) {
+        throw new Error("ACCOUNT_NOT_FOUND: Account not found");
+      }
+
+      const [row] = await tx
+        .select({
+          totalTokens: sql<number>`COALESCE(SUM(${llmUsageLog.inputTokens} + ${llmUsageLog.outputTokens}), 0)`,
+        })
+        .from(llmUsageLog)
+        .where(
+          and(
+            eq(llmUsageLog.accountId, accountId),
+            gte(llmUsageLog.createdAt, monthStart),
+          ),
+        );
+
+      const used = Number(row?.totalTokens ?? 0);
+      if (used + reservedTotalTokens > PLATFORM_MONTHLY_TOKEN_QUOTA) {
+        throw new Error(
+          `QUOTA_EXCEEDED: Monthly platform token quota reached (${used.toLocaleString()} / ${PLATFORM_MONTHLY_TOKEN_QUOTA.toLocaleString()}). ` +
+          "Add a BYOK API key in Settings to continue generating.",
+        );
+      }
+
+      const [reservation] = await tx
+        .insert(llmUsageLog)
+        .values({
+          accountId,
+          provider: PLATFORM_QUOTA_RESERVATION_PROVIDER,
+          model: PLATFORM_QUOTA_RESERVATION_MODEL,
+          purpose: `quota_reservation:${purpose}`,
+          inputTokens: reservedInputTokens,
+          outputTokens: reservedOutputTokens,
+          latencyMs: 0,
+        })
+        .returning({ id: llmUsageLog.id });
+
+      if (!reservation) {
+        throw new Error("LLM_USAGE_RESERVATION_FAILED: Failed to reserve platform quota");
+      }
+
+      return reservation.id;
+    });
+  }
+
+  private static async releasePlatformQuotaReservation(reservationId: string): Promise<void> {
+    try {
+      await db.delete(llmUsageLog).where(eq(llmUsageLog.id, reservationId));
+    } catch (releaseErr) {
+      console.error("Failed to release LLM quota reservation:", releaseErr);
     }
   }
 
@@ -167,6 +269,7 @@ export class LLMService {
     config: LLMConfig,
     prompt: string,
     purpose: string,
+    quotaReservationId?: string,
   ): Promise<LLMResponse> {
     const model = config.model ?? DEFAULT_GEMINI_MODEL;
     const client = new GoogleGenAI({ apiKey: config.apiKey });
@@ -191,7 +294,7 @@ export class LLMService {
     const inputTokens = response.usageMetadata?.promptTokenCount ?? 0;
     const outputTokens = response.usageMetadata?.candidatesTokenCount ?? 0;
 
-    await LLMService.logUsage(accountId, "google", model, purpose, inputTokens, outputTokens, latencyMs);
+    await LLMService.logUsage(accountId, "google", model, purpose, inputTokens, outputTokens, latencyMs, quotaReservationId);
 
     return { text, inputTokens, outputTokens, latencyMs };
   }
@@ -202,6 +305,7 @@ export class LLMService {
     config: LLMConfig,
     prompt: string,
     purpose: string,
+    quotaReservationId?: string,
   ): Promise<LLMResponse> {
     const model = config.model ?? DEFAULT_OPENROUTER_MODEL;
     const start = Date.now();
@@ -241,7 +345,7 @@ export class LLMService {
     const inputTokens = data.usage?.prompt_tokens ?? 0;
     const outputTokens = data.usage?.completion_tokens ?? 0;
 
-    await LLMService.logUsage(accountId, "openrouter", model, purpose, inputTokens, outputTokens, latencyMs);
+    await LLMService.logUsage(accountId, "openrouter", model, purpose, inputTokens, outputTokens, latencyMs, quotaReservationId);
 
     return { text, inputTokens, outputTokens, latencyMs };
   }
@@ -255,8 +359,28 @@ export class LLMService {
     inputTokens: number,
     outputTokens: number,
     latencyMs: number,
+    quotaReservationId?: string,
   ): Promise<void> {
     try {
+      if (quotaReservationId) {
+        const [updated] = await db
+          .update(llmUsageLog)
+          .set({
+            provider,
+            model,
+            purpose,
+            inputTokens,
+            outputTokens,
+            latencyMs,
+          })
+          .where(eq(llmUsageLog.id, quotaReservationId))
+          .returning({ id: llmUsageLog.id });
+
+        if (updated) {
+          return;
+        }
+      }
+
       await db.insert(llmUsageLog).values({
         accountId,
         provider,

@@ -18,17 +18,26 @@ const byokSchema = z.object({
   resend: z.string().nullable().optional(),
 });
 
+async function getAccountByokKeys(accountId: string): Promise<Record<string, string>> {
+  const [record] = await db
+    .select({ byokKeys: accounts.byokKeys })
+    .from(accounts)
+    .where(eq(accounts.id, accountId))
+    .limit(1);
+
+  return record?.byokKeys ?? {};
+}
+
 export async function GET() {
   try {
     const account = await getAuthAccount();
     if (!account) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    // Return only which providers have keys configured, never the raw keys
+    // Return only which providers have keys configured, never the raw keys returned
     const configured: Record<string, boolean> = {};
-    if (account.byokKeys) {
-      for (const provider of Object.keys(account.byokKeys)) {
-        configured[provider] = true;
-      }
+    const existingKeys = await getAccountByokKeys(account.id);
+    for (const provider of Object.keys(existingKeys)) {
+      configured[provider] = true;
     }
 
     return NextResponse.json({ providers: configured });
@@ -56,7 +65,7 @@ export async function PUT(req: NextRequest) {
     }
 
     // Build new encrypted keys, preserving existing ones not being updated
-    const existingKeys = account.byokKeys ?? {};
+    const existingKeys = await getAccountByokKeys(account.id);
     const newKeys: Record<string, string> = { ...existingKeys };
 
     // Encrypt each provided key individually, or delete if null/empty

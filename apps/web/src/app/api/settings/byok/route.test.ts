@@ -1,13 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createMockRequest, createMockAccount } from "@/test/api-helpers";
 
-const { mockGetAuthAccount, mockEncrypt, mockDbUpdate } = vi.hoisted(() => {
+const { mockGetAuthAccount, mockEncrypt, mockDbSelect, mockDbUpdate } = vi.hoisted(() => {
   const mockGetAuthAccount = vi.fn();
   const mockEncrypt = vi.fn((val: string) => `encrypted:${val}`);
-  const mockWhere = vi.fn().mockResolvedValue(undefined);
-  const mockSet = vi.fn().mockReturnValue({ where: mockWhere });
+
+  // Mock for db.select (used by getAccountByokKeys)
+  const mockLimit = vi.fn().mockResolvedValue([{ byokKeys: null }]);
+  const mockWhereSelect = vi.fn().mockReturnValue({ limit: mockLimit });
+  const mockFrom = vi.fn().mockReturnValue({ where: mockWhereSelect });
+  const mockDbSelect = vi.fn().mockReturnValue({ from: mockFrom });
+
+  // Mock for db.update
+  const mockWhereUpdate = vi.fn().mockResolvedValue(undefined);
+  const mockSet = vi.fn().mockReturnValue({ where: mockWhereUpdate });
   const mockDbUpdate = vi.fn().mockReturnValue({ set: mockSet });
-  return { mockGetAuthAccount, mockEncrypt, mockDbUpdate };
+
+  return { mockGetAuthAccount, mockEncrypt, mockDbSelect, mockDbUpdate };
 });
 
 vi.mock("@/lib/auth/session", () => ({
@@ -22,8 +31,8 @@ vi.mock("@outreachos/services", () => ({
 }));
 
 vi.mock("@outreachos/db", () => ({
-  db: { update: mockDbUpdate },
-  accounts: { id: "id" },
+  db: { select: mockDbSelect, update: mockDbUpdate },
+  accounts: { id: "id", byokKeys: "byokKeys" },
 }));
 
 vi.mock("drizzle-orm", () => ({
@@ -36,6 +45,11 @@ describe("GET /api/settings/byok", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetAuthAccount.mockResolvedValue(createMockAccount({ byokKeys: null } as any));
+    // Reset select mock to return empty byokKeys by default
+    const mockLimit = vi.fn().mockResolvedValue([{ byokKeys: null }]);
+    const mockWhereSelect = vi.fn().mockReturnValue({ limit: mockLimit });
+    const mockFrom = vi.fn().mockReturnValue({ where: mockWhereSelect });
+    mockDbSelect.mockReturnValue({ from: mockFrom });
   });
 
   it("returns 401 when not authenticated", async () => {
@@ -52,9 +66,16 @@ describe("GET /api/settings/byok", () => {
   });
 
   it("returns configured providers without exposing raw keys", async () => {
-    mockGetAuthAccount.mockResolvedValueOnce(
-      createMockAccount({ byokKeys: { gemini: "encrypted-val", openrouter: "encrypted-val2" } } as any),
-    );
+    mockGetAuthAccount.mockResolvedValueOnce(createMockAccount());
+
+    // Configure mockDbSelect to return byokKeys (route uses getAccountByokKeys which calls db.select)
+    const mockLimit = vi.fn().mockResolvedValue([
+      { byokKeys: { gemini: "encrypted-val", openrouter: "encrypted-val2" } },
+    ]);
+    const mockWhereSelect = vi.fn().mockReturnValue({ limit: mockLimit });
+    const mockFrom = vi.fn().mockReturnValue({ where: mockWhereSelect });
+    mockDbSelect.mockReturnValue({ from: mockFrom });
+
     const res = await GET();
     expect(res.status).toBe(200);
     const data = await res.json();
@@ -68,6 +89,11 @@ describe("PUT /api/settings/byok", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetAuthAccount.mockResolvedValue(createMockAccount({ byokKeys: null } as any));
+    // Reset select mock to return empty byokKeys by default
+    const mockLimit = vi.fn().mockResolvedValue([{ byokKeys: null }]);
+    const mockWhereSelect = vi.fn().mockReturnValue({ limit: mockLimit });
+    const mockFrom = vi.fn().mockReturnValue({ where: mockWhereSelect });
+    mockDbSelect.mockReturnValue({ from: mockFrom });
   });
 
   it("returns 401 when not authenticated", async () => {
