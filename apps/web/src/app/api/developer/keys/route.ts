@@ -9,16 +9,20 @@ import { getAuthAccount } from "@/lib/auth/session";
 import { db, apiKeys } from "@outreachos/db";
 import { eq, and, isNull } from "drizzle-orm";
 import { z } from "zod";
-import { randomBytes, createHash } from "crypto";
+import { randomBytes } from "crypto";
+import bcrypt from "bcrypt";
 
 const createKeySchema = z.object({
   name: z.string().min(1).max(100),
   scopes: z.array(z.enum(["read", "write", "admin"])).min(1),
 });
 
-function generateApiKey(): { key: string; hash: string; prefix: string } {
+// bcrypt cost factor - higher is more secure but slower (10-12 recommended)
+const BCRYPT_SALT_ROUNDS = 10;
+
+async function generateApiKey(): Promise<{ key: string; hash: string; prefix: string }> {
   const key = `osk_${randomBytes(32).toString("hex")}`;
-  const hash = createHash("sha256").update(key).digest("hex");
+  const hash = await bcrypt.hash(key, BCRYPT_SALT_ROUNDS);
   const prefix = key.slice(0, 12);
   return { key, hash, prefix };
 }
@@ -72,7 +76,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { key, hash, prefix } = generateApiKey();
+    const { key, hash, prefix } = await generateApiKey();
 
     const [created] = await db
       .insert(apiKeys)

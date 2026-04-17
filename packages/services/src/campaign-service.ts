@@ -15,13 +15,15 @@ import {
 import { eq, and, sql, desc, count } from "drizzle-orm";
 import { TemplateService, type RenderContext } from "./template-service.js";
 import { LLMService, type LLMConfig } from "./llm-service.js";
+import { WebhookService, type WebhookEvent as OutboundWebhookEvent } from "./webhook-service.js";
+import { BillingService } from "./billing-service.js";
 
 const COMPLAINT_RATE_THRESHOLD = 0.001; // 0.1% — auto-pause if exceeded
 const BATCH_SEND_DELAY_MS = 100; // ~10 emails/s to stay within Resend rate limits
 const MAX_RETRIES = 3; // Max retry attempts for transient Resend errors
 
 export type CampaignType = "one_time" | "journey" | "funnel" | "ab_test" | "newsletter";
-export type CampaignStatus = "draft" | "active" | "paused" | "completed" | "stopped";
+export type CampaignStatus = "draft" | "scheduled" | "running" | "active" | "paused" | "completed" | "stopped";
 
 export interface CreateCampaignInput {
   accountId: string;
@@ -214,14 +216,36 @@ export class CampaignService {
           });
 
           // Create message instance record
+          const messageId = result.data?.id;
           await db.insert(messageInstances).values({
             campaignId,
             contactId: contact.id,
             templateId: template.id,
-            resendMessageId: result.data?.id ?? null,
+            resendMessageId: messageId ?? null,
             subject: renderedSubject,
             status: "sent",
             sentAt: new Date(),
+          });
+
+          // Emit webhook event for email sent
+          WebhookService.dispatch(accountId, "email.sent", {
+            campaignId,
+            contactId: contact.id,
+            messageId,
+            email: contact.email,
+            subject: renderedSubject,
+            sentAt: new Date().toISOString(),
+          }).catch((err: unknown) => {
+            console.error("[CampaignService] Failed to emit email.sent webhook:", err);
+          });
+
+          // Track billing usage (async, don't block)
+          BillingService.recordEmailUsage(accountId, undefined, 1, {
+            campaignId,
+            messageId: messageId ?? undefined,
+            status: "sent",
+          }).catch((err: unknown) => {
+            console.error("[CampaignService] Failed to record email usage:", err);
           });
 
           progress.sent++;
@@ -244,6 +268,21 @@ export class CampaignService {
               subject: renderedSubject,
               status: "failed",
             });
+
+            // Emit webhook event for bounce (permanent failure)
+            const errorMessage = err instanceof Error ? err.message : "Unknown error";
+            WebhookService.dispatch(accountId, "email.bounced", {
+              campaignId,
+              contactId: contact.id,
+              email: contact.email,
+              subject: renderedSubject,
+              bounceType: "permanent",
+              bounceReason: errorCode || errorMessage,
+              bouncedAt: new Date().toISOString(),
+            }).catch((err: unknown) => {
+              console.error("[CampaignService] Failed to emit email.bounced webhook:", err);
+            });
+
             progress.failed++;
             break;
           }
@@ -345,7 +384,34 @@ export class CampaignService {
         const lines = llmResult.text.split('\n').filter(l => l.trim());
         const subject = lines[0]?.replace(/^Subject:\s*/i, '') || "Introduction";
         const bodyLines = lines.slice(1).filter(Boolean);
-        const bodyContent = bodyLines.length > 0 ? bodyLines.join('\n').trim() : "<p></p>";
+        const bodyContent = bodyLines.length > 0 ? bodyLines.join('\n').trim() : "";
+
+        // Validate email has sufficient content
+        const MIN_BODY_LENGTH = 50; // Minimum characters for a meaningful email
+        if (bodyContent.length < MIN_BODY_LENGTH) {
+          console.error(`[CampaignService] Generated email body too short or empty for contact ${contact.id}`, {
+            campaignId,
+            contactId: contact.id,
+            subject,
+            bodyLength: bodyContent.length,
+            generatedText: llmResult.text.slice(0, 500),
+          });
+          progress.failed++;
+
+          // Record failure in messageInstances (mirrors LLM exception handler)
+          await db.insert(messageInstances).values({
+            campaignId,
+            contactId: contact.id,
+            subject: subject.slice(0, 200),
+            status: "failed",
+          });
+
+          // Notify progress immediately
+          onProgress?.(progress);
+
+          continue; // Skip this contact, don't send empty email
+        }
+
         const bodyHtml = CampaignService.convertPlainTextToHtml(bodyContent);
 
         let retryCount = 0;
@@ -458,10 +524,21 @@ export class CampaignService {
     const resendMessageId = event.data.email_id;
     if (!resendMessageId) return;
 
-    // Find the corresponding message instance
+    // Find the corresponding message instance with campaign info for accountId
     const [message] = await db
-      .select()
+      .select({
+        id: messageInstances.id,
+        campaignId: messageInstances.campaignId,
+        contactId: messageInstances.contactId,
+        status: messageInstances.status,
+        deliveredAt: messageInstances.deliveredAt,
+        openedAt: messageInstances.openedAt,
+        lastOpenedAt: messageInstances.lastOpenedAt,
+        openCount: messageInstances.openCount,
+        accountId: campaigns.accountId,
+      })
       .from(messageInstances)
+      .innerJoin(campaigns, eq(messageInstances.campaignId, campaigns.id))
       .where(eq(messageInstances.resendMessageId, resendMessageId))
       .limit(1);
 
@@ -474,6 +551,21 @@ export class CampaignService {
       timestamp: new Date(event.created_at),
       metadata: event.data as Record<string, unknown>,
     });
+
+    // Emit outbound webhook for the event
+    const outboundEvent = event.type;
+    if (["email.delivered", "email.opened", "email.clicked", "email.bounced", "email.complained"].includes(outboundEvent)) {
+      WebhookService.dispatch(message.accountId, outboundEvent as OutboundWebhookEvent, {
+        campaignId: message.campaignId,
+        contactId: message.contactId,
+        messageId: resendMessageId,
+        email: event.data.to || event.data.email,
+        timestamp: event.created_at,
+        metadata: event.data,
+      }).catch((err: unknown) => {
+        console.error(`[CampaignService] Failed to emit ${outboundEvent} webhook:`, err);
+      });
+    }
 
     // Update message instance status based on event type (with progression check)
     const statusMap: Record<string, string> = {

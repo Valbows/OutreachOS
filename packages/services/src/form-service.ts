@@ -37,10 +37,18 @@ export interface CreateFormInput {
   funnelId?: string;
 }
 
+export interface FormStep {
+  id: string;
+  stepNumber: number;
+  title: string;
+  fields: string[];
+}
+
 export interface UpdateFormInput {
   name?: string;
   type?: FormType;
   fields?: FormField[];
+  steps?: FormStep[];
   htmlContent?: string;
   cssContent?: string;
   successMessage?: string;

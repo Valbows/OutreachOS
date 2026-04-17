@@ -238,7 +238,7 @@ describe("@outreachos/db", () => {
           createTableRelationsHelpers(dbModule.llmUsageLog),
         ),
       ),
-    ).toEqual(["account"]);
+    ).toEqual(["account", "apiKey"]);
     expect(
       Object.keys(
         dbModule.apiKeysRelations.config(

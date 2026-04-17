@@ -33,3 +33,7 @@ export { BillingService } from "./billing-service.js";
 export type { UsageLimits, CurrentUsage, UsageType } from "./billing-service.js";
 export { SecurityService } from "./security-service.js";
 export type { SecurityAuditResult } from "./security-service.js";
+export { ExternalApiUsageService } from "./external-api-usage-service.js";
+export type { LlmUsageInput, HunterUsageInput, ResendUsageInput } from "./external-api-usage-service.js";
+export { McpService } from "./mcp-service.js";
+export type { CreateMcpServerInput, UpdateMcpServerInput, McpTestResult } from "./mcp-service.js";

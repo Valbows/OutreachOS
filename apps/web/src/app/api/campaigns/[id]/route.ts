@@ -9,7 +9,7 @@ const updateSchema = z.object({
   templateId: z.string().uuid().optional(),
   scheduledAt: z.string().datetime().nullable().optional(),
   settings: z.record(z.string(), z.unknown()).optional(),
-  status: z.enum(["draft", "active", "paused", "completed", "stopped"]).optional(),
+  status: z.enum(["draft", "scheduled", "running", "active", "paused", "completed", "stopped"]).optional(),
 });
 
 export async function GET(

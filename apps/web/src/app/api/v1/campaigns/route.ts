@@ -9,7 +9,7 @@ import { withApiAuth, withRateLimit, ApiContext } from "@/lib/api/auth";
 import { CampaignService, CampaignStatus } from "@outreachos/services";
 import { z } from "zod";
 
-const campaignStatuses = ["draft", "active", "paused", "completed", "stopped"] as const;
+const campaignStatuses = ["draft", "scheduled", "running", "active", "paused", "completed", "stopped"] as const;
 
 const createCampaignSchema = z.object({
   name: z.string().min(1).max(200),

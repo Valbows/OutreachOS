@@ -211,4 +211,209 @@ describe("JourneyService", () => {
       );
     });
   });
+
+  describe("addStep validation", () => {
+    it("rejects empty name", async () => {
+      await expect(
+        JourneyService.addStep("account-1", "journey-1", {
+          name: "",
+          delayDays: 3,
+        }),
+      ).rejects.toThrow("Invalid journey input");
+    });
+
+    it("rejects whitespace-only name", async () => {
+      await expect(
+        JourneyService.addStep("account-1", "journey-1", {
+          name: "   ",
+          delayDays: 3,
+        }),
+      ).rejects.toThrow("Invalid journey input");
+    });
+
+    it("rejects negative delayDays", async () => {
+      await expect(
+        JourneyService.addStep("account-1", "journey-1", {
+          name: "Follow Up",
+          delayDays: -1,
+        }),
+      ).rejects.toThrow("Invalid journey input");
+    });
+
+    it("accepts valid input", async () => {
+      const { db } = await import("@outreachos/db");
+
+      // Mock journey ownership check (outside transaction)
+      vi.mocked(db.select).mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([{ id: "journey-1" }]),
+          }),
+        }),
+      } as never);
+
+      // Mock transaction for atomic max step + insert
+      const returningMock = vi.fn().mockResolvedValue([{ id: "step-3", name: "New Step" }]);
+      const valuesMock = vi.fn().mockReturnValue({ returning: returningMock });
+      const insertMock = vi.fn().mockReturnValue({ values: valuesMock });
+
+      const tx = {
+        select: vi.fn().mockReturnValue({
+          from: vi.fn().mockReturnValue({
+            where: vi.fn().mockResolvedValue([{ maxNumber: 2 }]),
+          }),
+        }),
+        insert: insertMock,
+      };
+
+      vi.mocked(db.transaction).mockImplementationOnce(
+        ((fn: (tx: unknown) => unknown) => fn(tx)) as never,
+      );
+
+      const result = await JourneyService.addStep("account-1", "journey-1", {
+        name: "New Step",
+        delayDays: 5,
+        templateId: "tpl-1",
+      });
+
+      expect(result).toBeDefined();
+      expect(result.name).toBe("New Step");
+      // Verify insert was called with correct stepNumber (max 2 + 1 = 3)
+      expect(valuesMock).toHaveBeenCalledWith(expect.objectContaining({ stepNumber: 3 }));
+    });
+  });
+
+  describe("deleteStep enrollment handling", () => {
+    it("reassigns enrollments to next step when deleting a step", async () => {
+      const { db } = await import("@outreachos/db");
+      const whereMock = vi.fn().mockResolvedValue(undefined);
+      const setMock = vi.fn().mockReturnValue({ where: whereMock });
+      const updateMock = vi.fn().mockReturnValue({ set: setMock });
+      const deleteWhereMock = vi.fn().mockResolvedValue(undefined);
+      const deleteMock = vi.fn().mockReturnValue({ where: deleteWhereMock });
+
+      // Mock step ownership verification (step exists) - includes campaigns.type filter
+      const andMock = vi.fn().mockReturnValue({ op: "AND", conds: [] });
+      vi.mocked(db.select).mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          innerJoin: vi.fn().mockReturnValue({
+            where: vi.fn().mockImplementation((...args) => {
+              // Capture the and() call with all filters including campaigns.type
+              andMock(...args);
+              return { limit: vi.fn().mockResolvedValue([{ id: "step-2", stepNumber: 2 }]) };
+            }),
+          }),
+        }),
+      } as never);
+
+      const tx = {
+        select: vi.fn()
+          // Mock next step query
+          .mockReturnValueOnce({
+            from: vi.fn().mockReturnValue({
+              where: vi.fn().mockReturnValue({
+                orderBy: vi.fn().mockReturnValue({
+                  limit: vi.fn().mockResolvedValue([{ id: "step-3", stepNumber: 3 }]),
+                }),
+              }),
+            }),
+          })
+          // Mock enrollments at step query
+          .mockReturnValueOnce({
+            from: vi.fn().mockReturnValue({
+              where: vi.fn().mockResolvedValue([{ id: "enrollment-1", status: "enrolled" }]),
+            }),
+          })
+          // Mock remaining steps for renumbering
+          .mockReturnValueOnce({
+            from: vi.fn().mockReturnValue({
+              where: vi.fn().mockReturnValue({
+                orderBy: vi.fn().mockResolvedValue([
+                  { id: "step-1", stepNumber: 1 },
+                  { id: "step-3", stepNumber: 3 },
+                ]),
+              }),
+            }),
+          }),
+        update: updateMock,
+        delete: deleteMock,
+      };
+
+      vi.mocked(db.transaction).mockImplementationOnce(
+        ((fn: (tx: unknown) => unknown) => fn(tx)) as never,
+      );
+
+      const result = await JourneyService.deleteStep("account-1", "journey-1", "step-2");
+
+      expect(result.deleted).toBe(true);
+      expect(result.reassignedCount).toBe(1);
+      // Verify enrollment was updated to next step
+      expect(setMock).toHaveBeenCalledWith(expect.objectContaining({ currentStepId: "step-3" }));
+    });
+
+    it("marks enrollments as completed when deleting the last step", async () => {
+      const { db } = await import("@outreachos/db");
+      const whereMock = vi.fn().mockResolvedValue(undefined);
+      const setMock = vi.fn().mockReturnValue({ where: whereMock });
+      const updateMock = vi.fn().mockReturnValue({ set: setMock });
+      const deleteWhereMock = vi.fn().mockResolvedValue(undefined);
+      const deleteMock = vi.fn().mockReturnValue({ where: deleteWhereMock });
+
+      // Mock step ownership verification - includes campaigns.type filter
+      vi.mocked(db.select).mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          innerJoin: vi.fn().mockReturnValue({
+            where: vi.fn().mockImplementation(() => {
+              return { limit: vi.fn().mockResolvedValue([{ id: "step-4", stepNumber: 4 }]) };
+            }),
+          }),
+        }),
+      } as never);
+
+      const tx = {
+        select: vi.fn()
+          // Mock next step query (no next step - this is the last one)
+          .mockReturnValueOnce({
+            from: vi.fn().mockReturnValue({
+              where: vi.fn().mockReturnValue({
+                orderBy: vi.fn().mockReturnValue({
+                  limit: vi.fn().mockResolvedValue([]),
+                }),
+              }),
+            }),
+          })
+          // Mock enrollments at step query
+          .mockReturnValueOnce({
+            from: vi.fn().mockReturnValue({
+              where: vi.fn().mockResolvedValue([{ id: "enrollment-2", status: "enrolled" }]),
+            }),
+          })
+          // Mock remaining steps for renumbering
+          .mockReturnValueOnce({
+            from: vi.fn().mockReturnValue({
+              where: vi.fn().mockReturnValue({
+                orderBy: vi.fn().mockResolvedValue([
+                  { id: "step-1", stepNumber: 1 },
+                  { id: "step-2", stepNumber: 2 },
+                  { id: "step-3", stepNumber: 3 },
+                ]),
+              }),
+            }),
+          }),
+        update: updateMock,
+        delete: deleteMock,
+      };
+
+      vi.mocked(db.transaction).mockImplementationOnce(
+        ((fn: (tx: unknown) => unknown) => fn(tx)) as never,
+      );
+
+      const result = await JourneyService.deleteStep("account-1", "journey-1", "step-4");
+
+      expect(result.deleted).toBe(true);
+      expect(result.reassignedCount).toBe(1);
+      // Verify enrollment was marked completed
+      expect(setMock).toHaveBeenCalledWith(expect.objectContaining({ status: "completed" }));
+    });
+  });
 });

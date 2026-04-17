@@ -1,17 +1,22 @@
 /**
  * Distributed Rate Limiter with Redis
  * Falls back to in-memory store for local development
+ * Supports configurable rate limits per account/plan
  */
 
 import Redis from "ioredis";
+import type { RateLimitConfig } from "@outreachos/db";
 
-const RATE_LIMIT_WINDOW_MS = 60_000;
-const RATE_LIMIT_MAX_REQUESTS = 100;
+// Default rate limit (fallback)
+const DEFAULT_RATE_LIMIT: RateLimitConfig = {
+  windowMs: 60_000,
+  maxRequests: 100,
+};
 
 // In-memory fallback for local tests
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
 
-// Periodic sweeper to prevent memory leak
+// Periodic sweeper to prevent memory leak (runs every minute)
 if (typeof setInterval !== "undefined") {
   setInterval(() => {
     const now = Date.now();
@@ -20,7 +25,7 @@ if (typeof setInterval !== "undefined") {
         rateLimitMap.delete(key);
       }
     }
-  }, RATE_LIMIT_WINDOW_MS);
+  }, 60_000);
 }
 
 // Lazy Redis client initialization
@@ -82,17 +87,20 @@ function getRedisClient(): Redis | null {
 /**
  * Check rate limit for an API key
  * Uses Redis in production, falls back to in-memory for local tests
+ * Supports configurable limits per account/plan
  */
 export async function checkRateLimit(
-  apiKeyId: string
+  apiKeyId: string,
+  config?: RateLimitConfig
 ): Promise<{ allowed: boolean; remaining: number; resetAt: number }> {
+  const limits = config ?? DEFAULT_RATE_LIMIT;
   const redis = getRedisClient();
 
   if (redis && redisAvailable) {
-    return checkRateLimitRedis(redis, apiKeyId);
+    return checkRateLimitRedis(redis, apiKeyId, limits);
   }
 
-  return checkRateLimitMemory(apiKeyId);
+  return checkRateLimitMemory(apiKeyId, limits);
 }
 
 /**
@@ -100,7 +108,8 @@ export async function checkRateLimit(
  */
 async function checkRateLimitRedis(
   redis: Redis,
-  apiKeyId: string
+  apiKeyId: string,
+  limits: RateLimitConfig
 ): Promise<{ allowed: boolean; remaining: number; resetAt: number }> {
   const key = `rate_limit:${apiKeyId}`;
   const now = Date.now();
@@ -127,27 +136,30 @@ async function checkRateLimitRedis(
       luaScript,
       1,
       key,
-      RATE_LIMIT_WINDOW_MS,
-      RATE_LIMIT_MAX_REQUESTS
+      limits.windowMs,
+      limits.maxRequests
     )) as [number, number];
 
     const [count, ttlRemaining] = result;
-    const allowed = count < RATE_LIMIT_MAX_REQUESTS;
-    const remaining = Math.max(0, RATE_LIMIT_MAX_REQUESTS - count);
+    const allowed = count <= limits.maxRequests;
+    const remaining = Math.max(0, limits.maxRequests - count);
     const resetAt = now + ttlRemaining;
 
     return { allowed, remaining, resetAt };
   } catch (err: unknown) {
     // Fallback to memory on Redis error
     console.warn("[RateLimiter] Redis error, falling back to memory:", err);
-    return checkRateLimitMemory(apiKeyId);
+    return checkRateLimitMemory(apiKeyId, limits);
   }
 }
 
 /**
  * In-memory rate limiting (fallback for local tests)
  */
-function checkRateLimitMemory(apiKeyId: string): {
+function checkRateLimitMemory(
+  apiKeyId: string,
+  limits: RateLimitConfig
+): {
   allowed: boolean;
   remaining: number;
   resetAt: number;
@@ -158,25 +170,26 @@ function checkRateLimitMemory(apiKeyId: string): {
   if (!entry || entry.resetAt < now) {
     rateLimitMap.set(apiKeyId, {
       count: 1,
-      resetAt: now + RATE_LIMIT_WINDOW_MS,
+      resetAt: now + limits.windowMs,
     });
     return {
       allowed: true,
-      remaining: RATE_LIMIT_MAX_REQUESTS - 1,
-      resetAt: now + RATE_LIMIT_WINDOW_MS,
+      remaining: limits.maxRequests - 1,
+      resetAt: now + limits.windowMs,
     };
   }
 
-  if (entry.count >= RATE_LIMIT_MAX_REQUESTS) {
+  if (entry.count >= limits.maxRequests) {
     return { allowed: false, remaining: 0, resetAt: entry.resetAt };
   }
 
   entry.count++;
   return {
     allowed: true,
-    remaining: RATE_LIMIT_MAX_REQUESTS - entry.count,
+    remaining: limits.maxRequests - entry.count,
     resetAt: entry.resetAt,
   };
 }
 
-export { RATE_LIMIT_WINDOW_MS, RATE_LIMIT_MAX_REQUESTS };
+export { DEFAULT_RATE_LIMIT };
+export type { RateLimitConfig };

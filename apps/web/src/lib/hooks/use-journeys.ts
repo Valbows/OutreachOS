@@ -8,6 +8,7 @@ export interface Journey {
   type: string;
   status: string;
   groupId: string | null;
+  scheduledAt: string | null;
   settings: Record<string, unknown> | null;
   createdAt: string;
   updatedAt: string;
@@ -130,6 +131,80 @@ export function useEnrollContacts() {
         throw new Error(err.error ?? "Failed to enroll contacts");
       }
       return res.json();
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["journeys", variables.journeyId] });
+    },
+  });
+}
+
+export function useAddJourneyStep() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      journeyId,
+      data,
+    }: {
+      journeyId: string;
+      data: { name: string; templateId?: string; delayDays: number; delayHour?: number | null };
+    }) => {
+      const res = await fetch(`/api/journeys/${journeyId}/steps`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error ?? "Failed to add step");
+      }
+      return res.json();
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["journeys", variables.journeyId] });
+    },
+  });
+}
+
+export function useUpdateJourneyStep() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      journeyId,
+      stepId,
+      data,
+    }: {
+      journeyId: string;
+      stepId: string;
+      data: { templateId?: string; delayDays?: number; delayHour?: number | null };
+    }) => {
+      const res = await fetch(`/api/journeys/${journeyId}/steps/${stepId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error ?? "Failed to update step");
+      }
+      return res.json();
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["journeys", variables.journeyId] });
+    },
+  });
+}
+
+export function useDeleteJourneyStep() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ journeyId, stepId }: { journeyId: string; stepId: string }) => {
+      const res = await fetch(`/api/journeys/${journeyId}/steps/${stepId}`, {
+        method: "DELETE",
+      });
+      if (!res.ok && res.status !== 204) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error ?? "Failed to delete step");
+      }
     },
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["journeys", variables.journeyId] });

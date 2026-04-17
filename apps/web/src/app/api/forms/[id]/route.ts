@@ -27,6 +27,16 @@ const updateSchema = z.object({
       }),
     )
     .optional(),
+  steps: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        stepNumber: z.number().int().min(1),
+        title: z.string().min(1),
+        fields: z.array(z.string()).optional(),
+      }),
+    )
+    .optional(),
   // HTML/CSS content with size limits to prevent XSS injection and huge payloads
   // NOTE: Values should be sanitized/escaped before rendering in UI
   htmlContent: z.string().max(50000).optional(), // ~50KB limit

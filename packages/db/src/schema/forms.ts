@@ -8,6 +8,7 @@ export const formTemplates = pgTable("form_templates", {
   name: text("name").notNull(),
   type: text("type").notNull(), // minimal, modal, inline_banner, multi_step, side_drawer
   fields: jsonb("fields").$type<Array<{ name: string; type: string; required: boolean; label: string }>>(),
+  steps: jsonb("steps").$type<Array<{ id: string; stepNumber: number; title: string; fields: string[] }>>(),
   htmlContent: text("html_content"),
   cssContent: text("css_content"),
   successMessage: text("success_message"),
@@ -16,7 +17,7 @@ export const formTemplates = pgTable("form_templates", {
   funnelId: uuid("funnel_id"),
   submissionCount: integer("submission_count").default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull().$onUpdate(() => new Date()),
 });
 
 export const formSubmissions = pgTable("form_submissions", {

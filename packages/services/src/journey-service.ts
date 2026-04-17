@@ -164,10 +164,11 @@ export class JourneyService {
   /** Update a journey step */
   static async updateStep(
     accountId: string,
+    journeyId: string,
     stepId: string,
     data: { templateId?: string; delayDays?: number; delayHour?: number | null },
   ) {
-    // First verify ownership by checking campaignSteps joined with campaigns
+    // Verify step belongs to the specified journey and account
     const [stepOwned] = await db
       .select({ id: campaignSteps.id })
       .from(campaignSteps)
@@ -175,13 +176,15 @@ export class JourneyService {
       .where(
         and(
           eq(campaignSteps.id, stepId),
+          eq(campaignSteps.campaignId, journeyId),
           eq(campaigns.accountId, accountId),
+          eq(campaigns.type, "journey"),
         ),
       )
       .limit(1);
 
     if (!stepOwned) {
-      return null; // Step not found or doesn't belong to this account
+      return null; // Step not found or doesn't belong to this journey/account
     }
 
     const [updated] = await db
@@ -190,6 +193,153 @@ export class JourneyService {
       .where(eq(campaignSteps.id, stepId))
       .returning();
     return updated;
+  }
+
+  /** Add a new step to a journey */
+  static async addStep(
+    accountId: string,
+    journeyId: string,
+    data: { name: string; templateId?: string; delayDays: number; delayHour?: number | null },
+  ) {
+    // Validate input
+    if (!data.name.trim() || typeof data.delayDays !== "number" || data.delayDays < 0) {
+      throw new Error("Invalid journey input");
+    }
+
+    // Verify journey ownership
+    const [journey] = await db
+      .select({ id: campaigns.id })
+      .from(campaigns)
+      .where(
+        and(
+          eq(campaigns.id, journeyId),
+          eq(campaigns.accountId, accountId),
+          eq(campaigns.type, "journey"),
+        ),
+      )
+      .limit(1);
+
+    if (!journey) {
+      throw new Error("Journey not found");
+    }
+
+    // Atomic transaction: get max step number and insert in one go
+    return db.transaction(async (tx) => {
+      // Get current max step number (within transaction for isolation)
+      const [maxStep] = await tx
+        .select({ maxNumber: sql<number>`COALESCE(MAX(${campaignSteps.stepNumber}), 0)` })
+        .from(campaignSteps)
+        .where(eq(campaignSteps.campaignId, journeyId));
+
+      const [newStep] = await tx
+        .insert(campaignSteps)
+        .values({
+          campaignId: journeyId,
+          stepNumber: (maxStep?.maxNumber ?? 0) + 1,
+          name: data.name,
+          templateId: data.templateId ?? null,
+          delayDays: data.delayDays,
+          delayHour: data.delayHour ?? null,
+        })
+        .returning();
+
+      return newStep;
+    });
+  }
+
+  /** Delete a step from a journey and renumber remaining steps */
+  static async deleteStep(accountId: string, journeyId: string, stepId: string) {
+    // Verify step ownership through journey
+    const [stepOwned] = await db
+      .select({ id: campaignSteps.id, stepNumber: campaignSteps.stepNumber })
+      .from(campaignSteps)
+      .innerJoin(campaigns, eq(campaignSteps.campaignId, campaigns.id))
+      .where(
+        and(
+          eq(campaigns.id, journeyId),
+          eq(campaigns.accountId, accountId),
+          eq(campaigns.type, "journey"),
+          eq(campaignSteps.id, stepId),
+        ),
+      )
+      .limit(1);
+
+    if (!stepOwned) {
+      throw new Error("Step not found");
+    }
+
+    return db.transaction(async (tx) => {
+      // Find the next step to reassign enrollments (if any)
+      const [nextStep] = await tx
+        .select({ id: campaignSteps.id, stepNumber: campaignSteps.stepNumber })
+        .from(campaignSteps)
+        .where(
+          and(
+            eq(campaignSteps.campaignId, journeyId),
+            sql`${campaignSteps.stepNumber} > ${stepOwned.stepNumber}`,
+          ),
+        )
+        .orderBy(asc(campaignSteps.stepNumber))
+        .limit(1);
+
+      // Reassign enrollments from deleted step to next step (or mark completed)
+      const enrollmentsAtStep = await tx
+        .select({ id: journeyEnrollments.id, status: journeyEnrollments.status })
+        .from(journeyEnrollments)
+        .where(
+          and(
+            eq(journeyEnrollments.campaignId, journeyId),
+            eq(journeyEnrollments.currentStepId, stepId),
+          ),
+        );
+
+      for (const enrollment of enrollmentsAtStep) {
+        if (nextStep) {
+          // Move enrollment to next step, recalculate nextSendAt
+          await tx
+            .update(journeyEnrollments)
+            .set({
+              currentStepId: nextStep.id,
+              status: "enrolled",
+              nextSendAt: sql`NOW() + INTERVAL '1 day' * ${nextStep.stepNumber - stepOwned.stepNumber}`,
+              updatedAt: new Date(),
+            })
+            .where(eq(journeyEnrollments.id, enrollment.id));
+        } else {
+          // No next step - mark as completed
+          await tx
+            .update(journeyEnrollments)
+            .set({
+              status: "completed",
+              currentStepId: null,
+              completedAt: new Date(),
+              updatedAt: new Date(),
+            })
+            .where(eq(journeyEnrollments.id, enrollment.id));
+        }
+      }
+
+      // Delete the step
+      await tx.delete(campaignSteps).where(eq(campaignSteps.id, stepId));
+
+      // Renumber remaining steps
+      const remainingSteps = await tx
+        .select({ id: campaignSteps.id, stepNumber: campaignSteps.stepNumber })
+        .from(campaignSteps)
+        .where(eq(campaignSteps.campaignId, journeyId))
+        .orderBy(asc(campaignSteps.stepNumber));
+
+      for (let i = 0; i < remainingSteps.length; i++) {
+        if (remainingSteps[i].stepNumber !== i + 1) {
+          await tx
+            .update(campaignSteps)
+            .set({ stepNumber: i + 1 })
+            .where(eq(campaignSteps.id, remainingSteps[i].id));
+        }
+      }
+
+      return { deleted: true, reassignedCount: enrollmentsAtStep.length };
+    });
   }
 
   /** Delete a journey and cascade enrollments */

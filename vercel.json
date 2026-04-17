@@ -1,0 +1,42 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "pnpm --filter @outreachos/web build",
+  "devCommand": "pnpm --filter @outreachos/web dev",
+  "installCommand": "pnpm install --frozen-lockfile",
+  "outputDirectory": "apps/web/.next",
+  "framework": "nextjs",
+  "crons": [
+    {
+      "path": "/api/cron/journey-scheduler",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/inbox-poll",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/newsletter-send",
+      "schedule": "*/10 * * * *"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/blog/:path*",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, s-maxage=60, stale-while-revalidate=3600"
+        }
+      ]
+    },
+    {
+      "source": "/blog",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, s-maxage=60, stale-while-revalidate=3600"
+        }
+      ]
+    }
+  ]
+}

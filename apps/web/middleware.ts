@@ -6,13 +6,6 @@ export default auth.middleware({
 
 export const config = {
   matcher: [
-    "/",
-    "/contacts/:path*",
-    "/campaigns/:path*",
-    "/templates/:path*",
-    "/forms/:path*",
-    "/analytics/:path*",
-    "/settings/:path*",
-    "/developer/:path*",
+    "/((?!api|_next|.*\\..*|login|signup|forgot-password|reset-password).*)",
   ],
 };

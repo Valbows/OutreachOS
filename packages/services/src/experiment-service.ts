@@ -15,6 +15,7 @@ import {
 import { eq, and, desc, sql, count, not, inArray } from "drizzle-orm";
 import { Resend } from "resend";
 import { TemplateService, type RenderContext } from "./template-service.js";
+import { WebhookService } from "./webhook-service.js";
 
 const CONTACTS_PER_VARIANT = 20;
 const MIN_BATCH_SIZE = 10; // Minimum contacts per variant for statistical significance
@@ -673,6 +674,21 @@ export class ExperimentService {
             status: "sent",
             sentAt: new Date(),
           });
+
+          // Emit webhook event
+          WebhookService.dispatch(accountId, "email.sent", {
+            campaignId: experiment.campaignId,
+            experimentId,
+            batchId,
+            contactId: contact.id,
+            variant: "A",
+            messageId: result.data.id,
+            email: contact.email,
+            subject: batch.variantA,
+            sentAt: new Date().toISOString(),
+          }).catch((err: unknown) => {
+            console.error("[ExperimentService] Failed to emit email.sent webhook:", err);
+          });
         }
       } catch (err) {
         failed++;
@@ -763,6 +779,21 @@ export class ExperimentService {
             subject: batch.variantB,
             status: "sent",
             sentAt: new Date(),
+          });
+
+          // Emit webhook event
+          WebhookService.dispatch(accountId, "email.sent", {
+            campaignId: experiment.campaignId,
+            experimentId,
+            batchId,
+            contactId: contact.id,
+            variant: "B",
+            messageId: result.data.id,
+            email: contact.email,
+            subject: batch.variantB,
+            sentAt: new Date().toISOString(),
+          }).catch((err: unknown) => {
+            console.error("[ExperimentService] Failed to emit email.sent webhook:", err);
           });
         }
       } catch (err) {

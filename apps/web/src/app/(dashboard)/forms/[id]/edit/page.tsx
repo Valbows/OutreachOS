@@ -6,7 +6,7 @@ import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 
 interface FormField {
-  id?: number; // Unique identifier for React keys
+  id: number;
   name: string;
   type: string;
   required: boolean;
@@ -14,6 +14,13 @@ interface FormField {
   placeholder?: string;
   options?: string[];
   defaultValue?: string;
+}
+
+interface FormStep {
+  id: string;
+  stepNumber: number;
+  title: string;
+  fields: string[];
 }
 
 const FIELD_TYPES = ["text", "email", "phone", "dropdown", "checkbox", "textarea", "hidden"] as const;
@@ -277,6 +284,7 @@ export default function FormEditorPage() {
 
   const [name, setName] = useState("");
   const [fields, setFields] = useState<FormField[]>([]);
+  const [steps, setSteps] = useState<FormStep[]>([]);
   const [successMessage, setSuccessMessage] = useState("");
   const [redirectUrl, setRedirectUrl] = useState("");
   const [htmlContent, setHtmlContent] = useState("");
@@ -299,6 +307,7 @@ export default function FormEditorPage() {
       const normalizedFields = normalizeFields((form.fields as FormField[]) ?? []);
       setFields(normalizedFields);
       setFieldIdCounter(getNextFieldId(normalizedFields));
+      setSteps((form.steps as FormStep[]) ?? []);
       setSuccessMessage(form.successMessage ?? "");
       setRedirectUrl(form.redirectUrl ?? "");
       setHtmlContent(form.htmlContent ?? "");
@@ -312,6 +321,7 @@ export default function FormEditorPage() {
         id,
         name,
         fields,
+        steps: steps.length > 0 ? steps : undefined,
         successMessage,
         redirectUrl: redirectUrl || undefined,
         htmlContent,

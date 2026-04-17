@@ -3,8 +3,9 @@
 import { useState, useEffect } from "react";
 import { Card, CardHeader, CardTitle, CardContent, Input, Button, Modal, Select, Switch } from "@/components/ui";
 import { authClient } from "@/lib/auth/client";
+import { IntegrationsSection } from "./integrations-section";
 
-type SettingsTab = "profile" | "inbox" | "notifications" | "danger";
+type SettingsTab = "profile" | "inbox" | "notifications" | "integrations" | "danger";
 type LLMProvider = "gemini" | "openrouter";
 
 type PreferencesResponse = {
@@ -12,6 +13,8 @@ type PreferencesResponse = {
     llmProvider: LLMProvider;
     llmModel: string;
     senderDomain: string;
+    gmailAddress: string;
+    gmailConnected: boolean;
   };
 };
 
@@ -24,6 +27,7 @@ const tabs: { id: SettingsTab; label: string; icon: React.ReactNode }[] = [
   { id: "profile", label: "Profile", icon: <ProfileIcon /> },
   { id: "inbox", label: "Inbox Connection", icon: <InboxIcon /> },
   { id: "notifications", label: "Notifications", icon: <NotificationsIcon /> },
+  { id: "integrations", label: "Integrations", icon: <IntegrationsIcon /> },
   { id: "danger", label: "Danger Zone", icon: <DangerIcon /> },
 ];
 
@@ -65,6 +69,7 @@ export default function SettingsPage() {
           {activeTab === "profile" && <ProfileSection />}
           {activeTab === "inbox" && <InboxSection />}
           {activeTab === "notifications" && <NotificationsSection />}
+          {activeTab === "integrations" && <IntegrationsSection />}
           {activeTab === "danger" && <DangerSection />}
         </div>
       </div>
@@ -288,6 +293,7 @@ function ProfileSection() {
 /* --- Inbox Connection Section --- */
 function InboxSection() {
   const [oauthPending, setOauthPending] = useState(false);
+  const [isDisconnecting, setIsDisconnecting] = useState(false);
   const [oauthError, setOauthError] = useState<string | null>(null);
   const [preferencesLoading, setPreferencesLoading] = useState(true);
   const [preferencesSaving, setPreferencesSaving] = useState(false);
@@ -296,6 +302,8 @@ function InboxSection() {
   const [llmProvider, setLlmProvider] = useState<LLMProvider>("gemini");
   const [llmModel, setLlmModel] = useState("");
   const [senderDomain, setSenderDomain] = useState("");
+  const [gmailAddress, setGmailAddress] = useState("");
+  const [gmailConnected, setGmailConnected] = useState(false);
   const [byokLoading, setByokLoading] = useState(true);
   const [byokSaving, setByokSaving] = useState(false);
   const [byokError, setByokError] = useState<string | null>(null);
@@ -312,6 +320,30 @@ function InboxSection() {
     let cancelled = false;
 
     async function loadSettings() {
+      // Run Gmail sync first to check for newly-linked accounts, but don't set state yet.
+      // Store result locally to avoid race with preferences fetch.
+      let tempSyncGmail: string | null = null;
+      try {
+        const syncRes = await fetch("/api/auth/google/sync", { method: "POST" });
+        if (syncRes.ok) {
+          const syncData = await syncRes.json();
+          console.log("[Settings] Gmail sync response:", syncData);
+          if (syncData.linked && syncData.gmailAddress) {
+            tempSyncGmail = syncData.gmailAddress;
+            // Note: Do NOT set success toast here - only OAuth callback should do that
+          } else if (!syncData.linked) {
+            console.warn("[Settings] Gmail sync returned linked:false, debug:", syncData.debug);
+            setOauthError(`Gmail not linked. Accounts found: ${syncData.debug?.accountCount || 0}`);
+          }
+        } else {
+          console.error("[Settings] Gmail sync failed:", syncRes.status);
+          setOauthError(`Sync failed with status ${syncRes.status}`);
+        }
+      } catch (e) {
+        console.error("[Settings] Gmail sync error:", e);
+        setOauthError(`Sync error: ${e instanceof Error ? e.message : String(e)}`);
+      }
+
       const results = await Promise.allSettled([
         fetch("/api/settings/preferences"),
         fetch("/api/settings/byok"),
@@ -333,6 +365,9 @@ function InboxSection() {
           setLlmProvider(data.data.llmProvider ?? "gemini");
           setLlmModel(data.data.llmModel ?? "");
           setSenderDomain(data.data.senderDomain ?? "");
+          // Prefer preferences gmailAddress, fallback to sync result if needed
+          setGmailAddress(data.data.gmailAddress || tempSyncGmail || "");
+          setGmailConnected(data.data.gmailConnected ?? false);
           setPreferencesError(null);
         }
       } catch (error) {
@@ -379,14 +414,59 @@ function InboxSection() {
     setOauthPending(true);
     setOauthError(null);
     try {
-      const { error } = await authClient.signIn.social({ provider: "google" });
+      const { error } = await authClient.signIn.social({
+        provider: "google",
+        callbackURL: "/settings",
+        scopes: [
+          "https://www.googleapis.com/auth/gmail.readonly",
+          "https://www.googleapis.com/auth/gmail.send",
+          "https://www.googleapis.com/auth/userinfo.email",
+          "https://www.googleapis.com/auth/userinfo.profile",
+        ],
+      });
       if (error) {
+        console.error("Google OAuth error:", error);
         setOauthError("Failed to connect Google account. Please try again.");
         setOauthPending(false);
       }
     } catch (error) {
+      console.error("Google OAuth exception:", error);
       setOauthError("Failed to connect Google account. Please try again.");
       setOauthPending(false);
+    }
+  }
+
+  async function handleGoogleDisconnect() {
+    setIsDisconnecting(true);
+    setOauthError(null);
+    try {
+      const res = await fetch("/api/settings/preferences", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ gmailAddress: null, gmailRefreshToken: null }),
+      });
+      if (res.ok) {
+        setGmailAddress("");
+        setGmailConnected(false);
+      } else {
+        // Handle non-OK response
+        const errorText = await res.text();
+        let errorMessage = "Failed to disconnect Gmail.";
+        try {
+          const errorData = JSON.parse(errorText);
+          if (errorData.error) {
+            errorMessage = errorData.error;
+          }
+        } catch {
+          // Use default message if JSON parsing fails
+        }
+        setOauthError(errorMessage);
+      }
+    } catch (error) {
+      console.error("Gmail disconnect error:", error);
+      setOauthError("Failed to disconnect Gmail. Network error.");
+    } finally {
+      setIsDisconnecting(false);
     }
   }
 
@@ -501,10 +581,29 @@ function InboxSection() {
               {oauthError}
             </div>
           )}
-          <Button variant="secondary" onClick={handleGoogleConnect} disabled={oauthPending}>
-            <GoogleIcon />
-            {oauthPending ? "Connecting..." : "Connect Google Account"}
-          </Button>
+          {gmailAddress ? (
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 px-3 py-2 bg-success/10 text-success rounded-lg text-sm">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+                Connected: {gmailAddress}
+              </div>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={isDisconnecting}
+                onClick={handleGoogleDisconnect}
+              >
+                {isDisconnecting ? "Disconnecting..." : "Disconnect"}
+              </Button>
+            </div>
+          ) : (
+            <Button variant="secondary" onClick={handleGoogleConnect} disabled={oauthPending}>
+              <GoogleIcon />
+              {oauthPending ? "Connecting..." : "Connect Google Account"}
+            </Button>
+          )}
         </CardContent>
       </Card>
 
@@ -856,6 +955,14 @@ function DangerIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
       <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" />
+    </svg>
+  );
+}
+
+function IntegrationsIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M17 7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h10c2.76 0 5-2.24 5-5s-2.24-5-5-5zm0 8H7c-1.65 0-3-1.35-3-3s1.35-3 3-3h10c1.65 0 3 1.35 3 3s-1.35 3-3 3zm-3-3c0 1.1.9 2 2 2s2-.9 2-2-.9-2-2-2-2 .9-2 2z" />
     </svg>
   );
 }

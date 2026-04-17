@@ -12,6 +12,7 @@ import {
 } from "@outreachos/db";
 import { eq, and, isNotNull, desc, count } from "drizzle-orm";
 import { ImapFlow } from "imapflow";
+import nodemailer, { type Transporter } from "nodemailer";
 
 export interface ImapConfig {
   host: string;
@@ -571,5 +572,84 @@ export class InboxService {
     // If no angle brackets, check if it's a bare email
     if (from.includes("@")) return from.trim();
     return null;
+  }
+
+  /** Create a Nodemailer SMTP transporter from config */
+  static createSmtpTransporter(config: SmtpConfig): Transporter {
+    return nodemailer.createTransport({
+      host: config.host,
+      port: config.port,
+      secure: config.secure ?? config.port === 465, // true for 465, false for other ports
+      auth: {
+        user: config.user,
+        pass: config.password,
+      },
+    });
+  }
+
+  /** Verify SMTP connection works (auth + DNS + TLS) */
+  static async verifySmtpConnection(config: SmtpConfig): Promise<boolean> {
+    const transporter = InboxService.createSmtpTransporter(config);
+    try {
+      await transporter.verify();
+      return true;
+    } catch (err) {
+      console.error("[InboxService] SMTP verify failed:", err);
+      return false;
+    } finally {
+      transporter.close();
+    }
+  }
+
+  /**
+   * Send an email via SMTP (used as fallback when Resend is unavailable,
+   * or for user's own-inbox replies where they want to keep sending
+   * from their personal domain).
+   */
+  static async sendViaSmtp(
+    config: SmtpConfig,
+    options: {
+      from: string;
+      to: string;
+      subject: string;
+      html?: string;
+      text?: string;
+      replyTo?: string;
+      inReplyTo?: string;
+      references?: string[];
+      headers?: Record<string, string>;
+    },
+  ): Promise<{ messageId: string; accepted: string[]; rejected: string[] }> {
+    if (!options.html && !options.text) {
+      throw new Error("Either html or text body is required");
+    }
+
+    const transporter = InboxService.createSmtpTransporter(config);
+
+    try {
+      const info = await transporter.sendMail({
+        from: options.from,
+        to: options.to,
+        subject: options.subject,
+        html: options.html,
+        text: options.text,
+        replyTo: options.replyTo,
+        inReplyTo: options.inReplyTo,
+        references: options.references?.join(" "),
+        headers: options.headers,
+      });
+
+      return {
+        messageId: info.messageId || "",
+        accepted: (info.accepted || []).map((a: string | { address: string }) =>
+          typeof a === "string" ? a : a.address
+        ),
+        rejected: (info.rejected || []).map((r: string | { address: string }) =>
+          typeof r === "string" ? r : r.address
+        ),
+      };
+    } finally {
+      transporter.close();
+    }
   }
 }

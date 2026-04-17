@@ -4,10 +4,10 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { db, apiKeys, apiUsage } from "@outreachos/db";
+import { db, apiKeys, apiUsage, accounts, PLAN_RATE_LIMITS, type PlanTier, type RateLimitConfig } from "@outreachos/db";
 import { eq, and, isNull } from "drizzle-orm";
-import { createHash } from "crypto";
-import { checkRateLimit } from "./rate-limiter.js";
+import bcrypt from "bcrypt";
+import { checkRateLimit, DEFAULT_RATE_LIMIT } from "./rate-limiter.js";
 
 export interface ApiContext {
   accountId: string;
@@ -36,19 +36,29 @@ export async function validateApiKey(req: NextRequest): Promise<ApiContext | nul
     return null;
   }
 
-  const keyHash = createHash("sha256").update(token).digest("hex");
-
-  const [key] = await db
+  // Get all non-revoked keys for this account and check bcrypt hash
+  // This is less efficient than direct lookup but required for bcrypt comparison
+  const potentialKeys = await db
     .select({
       id: apiKeys.id,
       accountId: apiKeys.accountId,
       scopes: apiKeys.scopes,
+      keyHash: apiKeys.keyHash,
     })
     .from(apiKeys)
-    .where(and(eq(apiKeys.keyHash, keyHash), isNull(apiKeys.revokedAt)))
-    .limit(1);
+    .where(isNull(apiKeys.revokedAt));
 
-  if (!key) {
+  // Find matching key using bcrypt compare
+  let matchedKey: typeof potentialKeys[0] | null = null;
+  for (const key of potentialKeys) {
+    const isMatch = await bcrypt.compare(token, key.keyHash);
+    if (isMatch) {
+      matchedKey = key;
+      break;
+    }
+  }
+
+  if (!matchedKey) {
     return null;
   }
 
@@ -57,15 +67,15 @@ export async function validateApiKey(req: NextRequest): Promise<ApiContext | nul
     await db
       .update(apiKeys)
       .set({ lastUsedAt: new Date() })
-      .where(eq(apiKeys.id, key.id));
+      .where(eq(apiKeys.id, matchedKey.id));
   } catch (err) {
-    console.warn("Failed to update lastUsedAt", { keyId: key.id, err });
+    console.warn("Failed to update lastUsedAt", { keyId: matchedKey.id, err });
   }
 
   return {
-    accountId: key.accountId,
-    apiKeyId: key.id,
-    scopes: (key.scopes as string[]) || [],
+    accountId: matchedKey.accountId,
+    apiKeyId: matchedKey.id,
+    scopes: (matchedKey.scopes as string[]) || [],
   };
 }
 
@@ -90,6 +100,14 @@ export async function recordApiUsage(
   } catch (err) {
     console.error("Failed to record API usage:", err);
   }
+}
+
+/**
+ * Check if user scopes satisfy required scopes (OR logic - any matching scope grants access)
+ * Exported for testing
+ */
+export function checkScopes(userScopes: string[], requiredScopes: string[]): boolean {
+  return requiredScopes.some((s) => userScopes.includes(s));
 }
 
 /**
@@ -121,7 +139,7 @@ export function withApiAuth(
 
     // Check required scopes
     if (options?.requiredScopes) {
-      const hasScope = options.requiredScopes.some((s) => apiContext!.scopes.includes(s));
+      const hasScope = checkScopes(apiContext.scopes, options.requiredScopes);
       if (!hasScope) {
         await recordApiUsage(apiContext.apiKeyId, endpoint, method, 403, Date.now() - startTime);
         return NextResponse.json(
@@ -149,7 +167,43 @@ export function withApiAuth(
 }
 
 /**
+ * Get rate limit configuration for an account
+ * Combines plan defaults with any custom overrides
+ */
+async function getAccountRateLimit(accountId: string): Promise<RateLimitConfig> {
+  try {
+    const [account] = await db
+      .select({
+        plan: accounts.plan,
+        rateLimit: accounts.rateLimit,
+      })
+      .from(accounts)
+      .where(eq(accounts.id, accountId))
+      .limit(1);
+
+    if (!account) {
+      return DEFAULT_RATE_LIMIT;
+    }
+
+    // Get plan defaults
+    const planLimits = PLAN_RATE_LIMITS[(account.plan as PlanTier) ?? "free"];
+
+    // Apply custom overrides if any
+    const customLimits = account.rateLimit ?? {};
+
+    return {
+      windowMs: customLimits.windowMs ?? planLimits.windowMs,
+      maxRequests: customLimits.maxRequests ?? planLimits.maxRequests,
+    };
+  } catch (err) {
+    console.warn("[RateLimit] Failed to get account rate limit:", err);
+    return DEFAULT_RATE_LIMIT;
+  }
+}
+
+/**
  * Wraps handler with rate limiting
+ * Uses account-specific limits based on plan and custom settings
  */
 export function withRateLimit(
   handler: (req: NextRequest, ctx?: { params?: Promise<Record<string, string>>; apiContext?: ApiContext }) => Promise<NextResponse>
@@ -164,12 +218,14 @@ export function withRateLimit(
       return handler(req, ctx);
     }
 
-    const { allowed, remaining, resetAt } = await checkRateLimit(apiContext.apiKeyId);
-    
+    // Get account-specific rate limits
+    const rateLimitConfig = await getAccountRateLimit(apiContext.accountId);
+    const { allowed, remaining, resetAt } = await checkRateLimit(apiContext.apiKeyId, rateLimitConfig);
+
     if (!allowed) {
       return NextResponse.json(
         { error: "Rate limit exceeded", retryAfter: Math.ceil((resetAt - Date.now()) / 1000) },
-        { 
+        {
           status: 429,
           headers: {
             "X-RateLimit-Remaining": "0",

@@ -1,9 +1,10 @@
 "use client";
 
+import { useState, useCallback, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { useCampaign, useCampaignAnalytics } from "@/lib/hooks/use-campaigns";
+import { useCampaign, useCampaignAnalytics, useUpdateCampaign } from "@/lib/hooks/use-campaigns";
 import { useCampaignExperiments, useExperimentBatches } from "@/lib/hooks/use-experiments";
-import { Badge } from "@/components/ui";
+import { Badge, Button } from "@/components/ui";
 
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -40,6 +41,202 @@ interface ExperimentData {
   status: string;
   championVariant: string | null;
   consecutiveWins: number | null;
+}
+
+interface ScheduleModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  campaignId: string;
+  currentScheduledAt: string | null | undefined;
+  campaignName: string;
+}
+
+function ScheduleModal({ isOpen, onClose, campaignId, currentScheduledAt, campaignName }: ScheduleModalProps) {
+  const [mode, setMode] = useState<"now" | "later">(() => (currentScheduledAt ? "later" : "now"));
+  const [scheduledAt, setScheduledAt] = useState(() => {
+    if (!currentScheduledAt) return "";
+    const d = new Date(currentScheduledAt);
+    const pad = (n: number) => n.toString().padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  });
+  const [error, setError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const updateCampaign = useUpdateCampaign();
+
+  const handleBackdropClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.target === e.currentTarget) onClose();
+  }, [onClose]);
+
+  const handleEscape = useCallback(() => {
+    onClose();
+  }, [onClose]);
+
+  // Reset local state when the modal opens (or when currentScheduledAt changes while open)
+  // so reopening reflects the latest props rather than stale state from a prior session.
+  useEffect(() => {
+    if (!isOpen) return;
+    setMode(currentScheduledAt ? "later" : "now");
+    if (currentScheduledAt) {
+      const d = new Date(currentScheduledAt);
+      const pad = (n: number) => n.toString().padStart(2, "0");
+      setScheduledAt(
+        `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`,
+      );
+    } else {
+      setScheduledAt("");
+    }
+    setError("");
+    setIsSubmitting(false);
+  }, [isOpen, currentScheduledAt]);
+
+  // Document-level Escape key listener since the backdrop div can't receive keyboard events
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        handleEscape();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [isOpen, handleEscape]);
+
+  const handleSubmit = async () => {
+    setError("");
+
+    if (mode === "later") {
+      if (!scheduledAt) {
+        setError("Please select a date and time");
+        return;
+      }
+      const selected = new Date(scheduledAt);
+      if (isNaN(selected.getTime()) || selected.getTime() <= Date.now()) {
+        setError("Please select a future date and time");
+        return;
+      }
+    }
+
+    setIsSubmitting(true);
+    try {
+      await updateCampaign.mutateAsync({
+        id: campaignId,
+        scheduledAt: mode === "now" ? null : scheduledAt,
+      });
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to update schedule");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/50 backdrop-blur-sm"
+      onClick={handleBackdropClick}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="schedule-modal-title"
+    >
+      <div className="w-full max-w-md rounded-2xl border border-outline-variant bg-surface p-6 shadow-xl">
+        <h2 id="schedule-modal-title" className="text-lg font-semibold text-on-surface mb-1">
+          {currentScheduledAt ? "Reschedule Campaign" : "Schedule Campaign"}
+        </h2>
+        <p className="text-sm text-on-surface-variant mb-6">{campaignName}</p>
+
+        <div className="space-y-4">
+          {/* Send Now Option */}
+          <div
+            className={`flex items-start gap-3 rounded-xl border p-4 cursor-pointer transition-colors ${
+              mode === "now"
+                ? "border-primary bg-primary/5"
+                : "border-outline-variant hover:border-outline"
+            }`}
+            onClick={() => setMode("now")}
+            role="radio"
+            aria-checked={mode === "now"}
+            tabIndex={0}
+            onKeyDown={(e) => e.key === "Enter" && setMode("now")}
+          >
+            <div
+              className={`mt-0.5 h-5 w-5 rounded-full border-2 flex items-center justify-center ${
+                mode === "now" ? "border-primary" : "border-outline"
+              }`}
+            >
+              {mode === "now" && <div className="h-2.5 w-2.5 rounded-full bg-primary" />}
+            </div>
+            <div>
+              <div className="text-sm font-medium text-on-surface">Send immediately</div>
+              <div className="text-xs text-on-surface-variant">Campaign will be sent right away</div>
+            </div>
+          </div>
+
+          {/* Schedule Later Option */}
+          <div
+            className={`rounded-xl border p-4 cursor-pointer transition-colors ${
+              mode === "later"
+                ? "border-primary bg-primary/5"
+                : "border-outline-variant hover:border-outline"
+            }`}
+            onClick={() => setMode("later")}
+            role="radio"
+            aria-checked={mode === "later"}
+            tabIndex={0}
+            onKeyDown={(e) => e.key === "Enter" && setMode("later")}
+          >
+            <div className="flex items-start gap-3">
+              <div
+                className={`mt-0.5 h-5 w-5 rounded-full border-2 flex items-center justify-center ${
+                  mode === "later" ? "border-primary" : "border-outline"
+                }`}
+              >
+                {mode === "later" && <div className="h-2.5 w-2.5 rounded-full bg-primary" />}
+              </div>
+              <div>
+                <div className="text-sm font-medium text-on-surface">Schedule for later</div>
+                <div className="text-xs text-on-surface-variant mb-3">Choose a future date and time</div>
+              </div>
+            </div>
+
+            {mode === "later" && (
+              <div className="mt-3 pl-8">
+                <label htmlFor="schedule-datetime" className="sr-only">
+                  Scheduled date and time
+                </label>
+                <input
+                  id="schedule-datetime"
+                  type="datetime-local"
+                  value={scheduledAt}
+                  onChange={(e) => setScheduledAt(e.target.value)}
+                  className="w-full rounded-lg border border-outline-variant bg-surface px-3 py-2 text-sm text-on-surface focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                  aria-invalid={!!error && !scheduledAt}
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Error Message */}
+          {error && (
+            <div role="alert" aria-live="assertive" className="text-xs text-error">
+              {error}
+            </div>
+          )}
+        </div>
+
+        {/* Actions */}
+        <div className="mt-6 flex justify-end gap-2">
+          <Button variant="secondary" onClick={onClose} disabled={isSubmitting}>
+            Cancel
+          </Button>
+          <Button onClick={handleSubmit} disabled={isSubmitting}>
+            {isSubmitting ? "Saving..." : "Save Schedule"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function ExperimentCard({ experiment }: { experiment: ExperimentData }) {
@@ -158,6 +355,7 @@ export default function CampaignAnalyticsPage() {
   const { data: campaign, isLoading: loadingCampaign } = useCampaign(campaignId);
   const { data: analytics, isLoading: loadingAnalytics } = useCampaignAnalytics(campaignId);
   const { data: experiments } = useCampaignExperiments(campaignId);
+  const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
 
   const isLoading = loadingCampaign || loadingAnalytics;
 
@@ -203,9 +401,26 @@ export default function CampaignAnalyticsPage() {
         &larr; Back to Campaigns
       </button>
 
-      <div className="flex items-center gap-3 mb-6">
+      <div className="flex items-center gap-3 mb-6 flex-wrap">
         <h1 className="text-2xl font-semibold tracking-tight">{campaign.name}</h1>
         <Badge variant={statusVariant}>{campaign.status}</Badge>
+        {campaign.scheduledAt && (
+          <span className="text-xs text-on-surface-variant">
+            Scheduled: {new Date(campaign.scheduledAt).toLocaleString(undefined, {
+              dateStyle: "medium",
+              timeStyle: "short",
+            })}
+          </span>
+        )}
+        <div className="ml-auto flex gap-2">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setIsScheduleModalOpen(true)}
+          >
+            {campaign.scheduledAt ? "Reschedule" : "Schedule"}
+          </Button>
+        </div>
       </div>
 
       {/* Key Metrics */}
@@ -288,6 +503,15 @@ export default function CampaignAnalyticsPage() {
           ))}
         </div>
       )}
+
+      {/* Schedule Modal */}
+      <ScheduleModal
+        isOpen={isScheduleModalOpen}
+        onClose={() => setIsScheduleModalOpen(false)}
+        campaignId={campaignId}
+        currentScheduledAt={campaign.scheduledAt}
+        campaignName={campaign.name}
+      />
     </div>
   );
 }

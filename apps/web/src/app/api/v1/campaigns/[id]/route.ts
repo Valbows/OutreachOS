@@ -12,7 +12,7 @@ import { z } from "zod";
 
 const updateCampaignSchema = z.object({
   name: z.string().min(1).max(200).optional(),
-  status: z.enum(["draft", "active", "paused", "completed", "stopped"]).optional(),
+  status: z.enum(["draft", "scheduled", "running", "active", "paused", "completed", "stopped"]).optional(),
 });
 
 async function handleGet(

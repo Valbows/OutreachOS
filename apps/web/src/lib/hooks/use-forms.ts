@@ -16,6 +16,12 @@ export interface Form {
     options?: string[];
     defaultValue?: string;
   }> | null;
+  steps?: Array<{
+    id: string;
+    stepNumber: number;
+    title: string;
+    fields: string[];
+  }>;
   htmlContent: string | null;
   cssContent: string | null;
   successMessage: string | null;

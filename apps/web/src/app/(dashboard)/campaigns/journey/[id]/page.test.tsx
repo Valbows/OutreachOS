@@ -1,7 +1,22 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import JourneyBuilderPage from "./page";
+
+const createTestQueryClient = () => new QueryClient({
+  defaultOptions: {
+    queries: { retry: false },
+    mutations: { retry: false },
+  },
+});
+
+const renderWithQueryClient = (ui: React.ReactElement) => {
+  const testQueryClient = createTestQueryClient();
+  return render(
+    <QueryClientProvider client={testQueryClient}>{ui}</QueryClientProvider>
+  );
+};
 
 const mockPush = vi.fn();
 const mockUseJourney = vi.fn();
@@ -9,6 +24,10 @@ const mockDeleteMutateAsync = vi.fn();
 const mockEnrollMutateAsync = vi.fn();
 const mockUseDeleteJourney = vi.fn();
 const mockUseEnrollContacts = vi.fn();
+const mockUpdateMutateAsync = vi.fn();
+const mockUseDeleteJourneyStep = vi.fn();
+const mockUseAddJourneyStep = vi.fn();
+const mockUseUpdateJourneyStep = vi.fn();
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ id: "journey1" }),
@@ -19,11 +38,25 @@ vi.mock("@/lib/hooks/use-journeys", () => ({
   useJourney: () => mockUseJourney(),
   useDeleteJourney: () => mockUseDeleteJourney(),
   useEnrollContacts: () => mockUseEnrollContacts(),
+  useDeleteJourneyStep: () => mockUseDeleteJourneyStep(),
+  useAddJourneyStep: () => mockUseAddJourneyStep(),
+  useUpdateJourneyStep: () => mockUseUpdateJourneyStep(),
+}));
+
+vi.mock("@/lib/hooks/use-campaigns", () => ({
+  useUpdateCampaign: () => ({ mutateAsync: mockUpdateMutateAsync }),
+}));
+
+vi.mock("@/components/ui", () => ({
+  Button: ({ children, onClick, disabled, variant, size }: { children: React.ReactNode; onClick?: () => void; disabled?: boolean; variant?: string; size?: string }) => (
+    <button onClick={onClick} disabled={disabled} data-variant={variant} data-size={size}>{children}</button>
+  ),
 }));
 
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubGlobal("confirm", vi.fn(() => true));
+  mockUpdateMutateAsync.mockResolvedValue({});
   mockUseJourney.mockReturnValue({ data: null, isLoading: false, error: null });
   mockUseDeleteJourney.mockReturnValue({ mutateAsync: mockDeleteMutateAsync, isPending: false, isError: false, error: null });
   mockUseEnrollContacts.mockReturnValue({
@@ -33,12 +66,15 @@ beforeEach(() => {
     isError: false,
     error: null,
   });
+  mockUseDeleteJourneyStep.mockReturnValue({ mutateAsync: vi.fn(), isPending: false, isError: false, error: null });
+  mockUseAddJourneyStep.mockReturnValue({ mutateAsync: vi.fn(), isPending: false, isError: false, error: null });
+  mockUseUpdateJourneyStep.mockReturnValue({ mutateAsync: vi.fn(), isPending: false, isError: false, error: null });
 });
 
 describe("JourneyBuilderPage", () => {
   it("renders loading and not-found states", () => {
     mockUseJourney.mockReturnValueOnce({ data: null, isLoading: true, error: null });
-    const { rerender } = render(<JourneyBuilderPage />);
+    const { rerender } = renderWithQueryClient(<JourneyBuilderPage />);
     expect(document.querySelector(".animate-spin")).toBeInTheDocument();
 
     mockUseJourney.mockReturnValueOnce({ data: null, isLoading: false, error: new Error("missing") });
@@ -69,7 +105,7 @@ describe("JourneyBuilderPage", () => {
       error: null,
     });
 
-    render(<JourneyBuilderPage />);
+    renderWithQueryClient(<JourneyBuilderPage />);
 
     expect(screen.getByText("Sales Follow-up")).toBeInTheDocument();
     expect(screen.getByText("active")).toBeInTheDocument();
@@ -94,7 +130,7 @@ describe("JourneyBuilderPage", () => {
       error: null,
     });
 
-    render(<JourneyBuilderPage />);
+    renderWithQueryClient(<JourneyBuilderPage />);
 
     await user.click(screen.getByRole("button", { name: /delete journey/i }));
 
@@ -125,7 +161,7 @@ describe("JourneyBuilderPage", () => {
     });
     mockEnrollMutateAsync.mockResolvedValueOnce({});
 
-    const { rerender } = render(<JourneyBuilderPage />);
+    const { rerender } = renderWithQueryClient(<JourneyBuilderPage />);
 
     await user.type(screen.getByPlaceholderText(/contact-id-1/i), "c1, c2");
     await user.click(screen.getByRole("button", { name: /^enroll$/i }));
@@ -141,5 +177,115 @@ describe("JourneyBuilderPage", () => {
     });
     rerender(<JourneyBuilderPage />);
     expect(screen.getByText(/enrollment failed/i)).toBeInTheDocument();
+  });
+
+  it("renders Schedule button when journey has no scheduledAt", () => {
+    mockUseJourney.mockReturnValue({
+      data: {
+        id: "journey1",
+        name: "Sales Follow-up",
+        status: "draft",
+        scheduledAt: null,
+        steps: [],
+        progress: null,
+      },
+      isLoading: false,
+      error: null,
+    });
+
+    renderWithQueryClient(<JourneyBuilderPage />);
+    expect(screen.getByRole("button", { name: /schedule$/i })).toBeInTheDocument();
+  });
+
+  it("renders Reschedule button and scheduled time when journey has scheduledAt", () => {
+    mockUseJourney.mockReturnValue({
+      data: {
+        id: "journey1",
+        name: "Sales Follow-up",
+        status: "scheduled",
+        scheduledAt: "2026-12-25T10:00:00.000Z",
+        steps: [],
+        progress: null,
+      },
+      isLoading: false,
+      error: null,
+    });
+
+    renderWithQueryClient(<JourneyBuilderPage />);
+    expect(screen.getByRole("button", { name: /reschedule/i })).toBeInTheDocument();
+    expect(screen.getByText(/starts:/i)).toBeInTheDocument();
+  });
+
+  it("opens schedule modal and updates journey schedule", async () => {
+    const user = userEvent.setup();
+    mockUseJourney.mockReturnValue({
+      data: {
+        id: "journey1",
+        name: "Sales Follow-up",
+        status: "draft",
+        scheduledAt: null,
+        steps: [],
+        progress: null,
+      },
+      isLoading: false,
+      error: null,
+    });
+
+    renderWithQueryClient(<JourneyBuilderPage />);
+    await user.click(screen.getByRole("button", { name: /schedule$/i }));
+
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByText(/schedule journey/i)).toBeInTheDocument();
+
+    // Click "Schedule for later" option
+    await user.click(screen.getByText(/schedule for later/i));
+
+    // Set date input
+    const futureDate = new Date(Date.now() + 86400000 * 2);
+    const pad = (n: number) => n.toString().padStart(2, "0");
+    const dateStr = `${futureDate.getFullYear()}-${pad(futureDate.getMonth() + 1)}-${pad(futureDate.getDate())}T${pad(futureDate.getHours())}:${pad(futureDate.getMinutes())}`;
+
+    const dateInput = screen.getByLabelText(/journey start date and time/i);
+    await user.clear(dateInput);
+    await user.type(dateInput, dateStr);
+
+    await user.click(screen.getByRole("button", { name: /save schedule/i }));
+
+    expect(mockUpdateMutateAsync).toHaveBeenCalledWith({
+      id: "journey1",
+      scheduledAt: expect.stringMatching(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/),
+    });
+  });
+
+  it("clears schedule when switching to start immediately", async () => {
+    const user = userEvent.setup();
+    mockUseJourney.mockReturnValue({
+      data: {
+        id: "journey1",
+        name: "Sales Follow-up",
+        status: "scheduled",
+        scheduledAt: "2026-12-25T10:00:00.000Z",
+        steps: [],
+        progress: null,
+      },
+      isLoading: false,
+      error: null,
+    });
+
+    render(<JourneyBuilderPage />);
+    await user.click(screen.getByRole("button", { name: /reschedule/i }));
+
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByText(/reschedule journey/i)).toBeInTheDocument();
+
+    // Click "Start immediately" option
+    await user.click(screen.getByText(/start immediately/i));
+
+    await user.click(screen.getByRole("button", { name: /save schedule/i }));
+
+    expect(mockUpdateMutateAsync).toHaveBeenCalledWith({
+      id: "journey1",
+      scheduledAt: null,
+    });
   });
 });

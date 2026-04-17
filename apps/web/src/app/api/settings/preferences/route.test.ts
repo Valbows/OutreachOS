@@ -69,6 +69,8 @@ describe("GET /api/settings/preferences", () => {
       llmProvider: "openrouter",
       llmModel: "openai/gpt-4o-mini",
       senderDomain: "mail.example.com",
+      gmailAddress: "",
+      gmailConnected: false,
     });
   });
 });
@@ -124,6 +126,8 @@ describe("PUT /api/settings/preferences", () => {
       llmProvider: "openrouter",
       llmModel: "anthropic/claude-3.5-sonnet",
       senderDomain: "outreach.example.com",
+      gmailAddress: "",
+      gmailConnected: false,
     });
   });
 });

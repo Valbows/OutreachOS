@@ -31,7 +31,7 @@ describe("checkRateLimit", () => {
   it("blocks requests after the in-memory limit is exceeded and resets after the window", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2024-01-01T00:00:00.000Z"));
-    const { checkRateLimit, RATE_LIMIT_WINDOW_MS } = await importRateLimiterWithRedis(class {} as any);
+    const { checkRateLimit, DEFAULT_RATE_LIMIT } = await importRateLimiterWithRedis(class {} as any);
 
     let result = await checkRateLimit("key_limit");
     for (let i = 0; i < 99; i += 1) {
@@ -43,7 +43,7 @@ describe("checkRateLimit", () => {
     expect(blocked.allowed).toBe(false);
     expect(blocked.remaining).toBe(0);
 
-    vi.setSystemTime(new Date(Date.now() + RATE_LIMIT_WINDOW_MS + 1));
+    vi.setSystemTime(new Date(Date.now() + DEFAULT_RATE_LIMIT.windowMs + 1));
     const reset = await checkRateLimit("key_limit");
 
     expect(reset.allowed).toBe(true);

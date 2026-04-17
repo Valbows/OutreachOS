@@ -16,9 +16,24 @@ const {
   mockAnd,
   mockIsNull,
   mockCheckRateLimit,
+  mockBcryptCompare,
 } = vi.hoisted(() => {
   const mockSelectLimit = vi.fn();
-  const mockSelectWhere = vi.fn(() => ({ limit: mockSelectLimit }));
+  // Create a mock that can be configured to return either an array directly
+  // (for queries without .limit()) or an object with .limit() (for queries with .limit())
+  let mockSelectWhereReturnsArray = true;
+  const mockSelectWhere = vi.fn((...args: unknown[]) => {
+    if (mockSelectWhereReturnsArray) {
+      // Return a thenable that resolves to the array
+      return Promise.resolve(mockSelectLimit()) as unknown as { limit: typeof mockSelectLimit };
+    }
+    return { limit: mockSelectLimit };
+  });
+  // Add a helper to configure the behavior
+  (mockSelectWhere as unknown as { _setReturnsArray: (val: boolean) => void })._setReturnsArray = (val: boolean) => {
+    mockSelectWhereReturnsArray = val;
+  };
+  mockSelectLimit.mockResolvedValue([]);
   const mockSelectFrom = vi.fn(() => ({ where: mockSelectWhere }));
   const mockDbSelect = vi.fn(() => ({ from: mockSelectFrom }));
   const mockUpdateWhere = vi.fn();
@@ -30,6 +45,7 @@ const {
   const mockAnd = vi.fn(() => "and");
   const mockIsNull = vi.fn(() => "isNull");
   const mockCheckRateLimit = vi.fn();
+  const mockBcryptCompare = vi.fn();
   return {
     mockDbSelect,
     mockSelectFrom,
@@ -44,6 +60,7 @@ const {
     mockAnd,
     mockIsNull,
     mockCheckRateLimit,
+    mockBcryptCompare,
   };
 });
 
@@ -68,6 +85,17 @@ vi.mock("@outreachos/db", () => ({
     statusCode: "statusCode",
     responseTimeMs: "responseTimeMs",
   },
+  accounts: {
+    id: "id",
+    plan: "plan",
+    rateLimit: "rateLimit",
+  },
+  PLAN_RATE_LIMITS: {
+    free: { windowMs: 60000, maxRequests: 30 },
+    starter: { windowMs: 60000, maxRequests: 100 },
+    growth: { windowMs: 60000, maxRequests: 500 },
+    enterprise: { windowMs: 60000, maxRequests: 2000 },
+  },
 }));
 
 vi.mock("drizzle-orm", () => ({
@@ -78,6 +106,16 @@ vi.mock("drizzle-orm", () => ({
 
 vi.mock("./rate-limiter.js", () => ({
   checkRateLimit: mockCheckRateLimit,
+  DEFAULT_RATE_LIMIT: { windowMs: 60000, maxRequests: 100 },
+}));
+
+vi.mock("bcrypt", () => ({
+  default: {
+    compare: mockBcryptCompare,
+    hash: vi.fn(),
+  },
+  compare: mockBcryptCompare,
+  hash: vi.fn(),
 }));
 
 import { recordApiUsage, validateApiKey, withApiAuth, withRateLimit } from "./auth";
@@ -102,7 +140,11 @@ describe("validateApiKey", () => {
     expect(wrongPrefix).toBeNull();
   });
 
-  it("returns null when the api key is not found", async () => {
+  it("returns null when the api key is not found (bcrypt compare fails)", async () => {
+    (mockSelectWhere as unknown as { _setReturnsArray: (val: boolean) => void })._setReturnsArray(true);
+    mockSelectLimit.mockResolvedValueOnce([{ id: "key1", accountId: "acc_1", scopes: ["read"], keyHash: "hash1" }]);
+    mockBcryptCompare.mockResolvedValueOnce(false);
+
     const result = await validateApiKey(
       createMockRequest("http://localhost/api/v1/contacts", {
         headers: { authorization: "Bearer osk_missing" },
@@ -112,8 +154,13 @@ describe("validateApiKey", () => {
     expect(result).toBeNull();
   });
 
-  it("returns context and updates lastUsedAt", async () => {
-    mockSelectLimit.mockResolvedValueOnce([{ id: "key1", accountId: "acc_1", scopes: ["read"] }]);
+  it("returns context and updates lastUsedAt when bcrypt compare succeeds", async () => {
+    (mockSelectWhere as unknown as { _setReturnsArray: (val: boolean) => void })._setReturnsArray(true);
+    mockSelectLimit.mockResolvedValueOnce([
+      { id: "key1", accountId: "acc_1", scopes: ["read"], keyHash: "hash1" },
+      { id: "key2", accountId: "acc_2", scopes: ["write"], keyHash: "hash2" },
+    ]);
+    mockBcryptCompare.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
 
     const result = await validateApiKey(
       createMockRequest("http://localhost/api/v1/contacts", {
@@ -121,14 +168,16 @@ describe("validateApiKey", () => {
       }),
     );
 
-    expect(result).toEqual({ accountId: "acc_1", apiKeyId: "key1", scopes: ["read"] });
+    expect(result).toEqual({ accountId: "acc_2", apiKeyId: "key2", scopes: ["write"] });
     expect(mockDbUpdate).toHaveBeenCalled();
     expect(mockUpdateSet).toHaveBeenCalledWith({ lastUsedAt: expect.any(Date) });
   });
 
   it("still returns context when lastUsedAt update fails", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    mockSelectLimit.mockResolvedValueOnce([{ id: "key1", accountId: "acc_1", scopes: [] }]);
+    (mockSelectWhere as unknown as { _setReturnsArray: (val: boolean) => void })._setReturnsArray(true);
+    mockSelectLimit.mockResolvedValueOnce([{ id: "key1", accountId: "acc_1", scopes: [], keyHash: "hash1" }]);
+    mockBcryptCompare.mockResolvedValueOnce(true);
     mockUpdateWhere.mockRejectedValueOnce(new Error("update failed"));
 
     const result = await validateApiKey(
@@ -176,9 +225,11 @@ describe("recordApiUsage", () => {
 describe("withApiAuth", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    (mockSelectWhere as unknown as { _setReturnsArray: (val: boolean) => void })._setReturnsArray(true);
     mockSelectLimit.mockResolvedValue([]);
     mockUpdateWhere.mockResolvedValue(undefined);
     mockInsertValues.mockResolvedValue(undefined);
+    mockBcryptCompare.mockReset();
   });
 
   it("returns 401 when the api key is invalid", async () => {
@@ -194,7 +245,9 @@ describe("withApiAuth", () => {
   });
 
   it("returns 403 when required scopes are missing and records usage", async () => {
-    mockSelectLimit.mockResolvedValueOnce([{ id: "key1", accountId: "acc_1", scopes: ["read"] }]);
+    (mockSelectWhere as unknown as { _setReturnsArray: (val: boolean) => void })._setReturnsArray(true);
+    mockSelectLimit.mockResolvedValueOnce([{ id: "key1", accountId: "acc_1", scopes: ["read"], keyHash: "hash1" }]);
+    mockBcryptCompare.mockResolvedValueOnce(true);
     const wrapped = withApiAuth(vi.fn(), { requiredScopes: ["admin"] });
 
     const response = await wrapped(
@@ -229,7 +282,9 @@ describe("withApiAuth", () => {
   });
 
   it("returns 500 and records usage when the handler throws", async () => {
-    mockSelectLimit.mockResolvedValueOnce([{ id: "key1", accountId: "acc_1", scopes: ["read"] }]);
+    (mockSelectWhere as unknown as { _setReturnsArray: (val: boolean) => void })._setReturnsArray(true);
+    mockSelectLimit.mockResolvedValueOnce([{ id: "key1", accountId: "acc_1", scopes: ["read"], keyHash: "hash1" }]);
+    mockBcryptCompare.mockResolvedValueOnce(true);
     const wrapped = withApiAuth(async () => {
       throw new Error("boom");
     });
@@ -248,9 +303,16 @@ describe("withApiAuth", () => {
 describe("withRateLimit", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockSelectLimit.mockResolvedValue([]);
+    // Configure mockSelectWhere to return { limit: mockSelectLimit } for queries with .limit()
+    (mockSelectWhere as unknown as { _setReturnsArray: (val: boolean) => void })._setReturnsArray(false);
+    // First call chain is for apiKeys (in validateApiKey via withApiAuth if no context) - returns all keys
+    // Second call chain is for accounts (in getAccountRateLimit) - returns single account
+    mockSelectLimit
+      .mockResolvedValueOnce([]) // For apiKeys query (bcrypt loop) - if validateApiKey is called
+      .mockResolvedValueOnce([{ plan: "starter", rateLimit: null }]); // For accounts query
     mockUpdateWhere.mockResolvedValue(undefined);
     mockCheckRateLimit.mockResolvedValue({ allowed: true, remaining: 42, resetAt: 1700000000000 });
+    mockBcryptCompare.mockReset();
   });
 
   it("passes through when no api context is available", async () => {
@@ -265,6 +327,10 @@ describe("withRateLimit", () => {
   });
 
   it("returns 429 when the rate limit is exceeded", async () => {
+    (mockSelectWhere as unknown as { _setReturnsArray: (val: boolean) => void })._setReturnsArray(false);
+    mockSelectLimit
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ plan: "starter", rateLimit: null }]);
     mockCheckRateLimit.mockResolvedValueOnce({ allowed: false, remaining: 0, resetAt: Date.now() + 9000 });
     const handler = vi.fn(async () => NextResponse.json({ ok: true }));
     const wrapped = withRateLimit(handler);
@@ -281,6 +347,10 @@ describe("withRateLimit", () => {
   });
 
   it("adds rate limit headers to successful responses", async () => {
+    (mockSelectWhere as unknown as { _setReturnsArray: (val: boolean) => void })._setReturnsArray(false);
+    mockSelectLimit
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ plan: "starter", rateLimit: null }]);
     const handler = vi.fn(async () => NextResponse.json({ ok: true }));
     const wrapped = withRateLimit(handler);
 

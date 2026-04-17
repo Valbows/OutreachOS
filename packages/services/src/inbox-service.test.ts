@@ -534,4 +534,72 @@ describe("InboxService", () => {
       expect(copySpy).toHaveBeenCalledWith(baseConfig, ["<msg-2@example.com>"], "Processed");
     });
   });
+
+  describe("SMTP send", () => {
+    const smtpConfig = {
+      host: "smtp.example.com",
+      port: 587,
+      user: "sender@example.com",
+      password: "pass",
+      secure: false,
+    };
+
+    it("creates a transporter with the correct options", () => {
+      const transporter = InboxService.createSmtpTransporter(smtpConfig);
+      expect(transporter).toBeDefined();
+      expect(typeof transporter.sendMail).toBe("function");
+    });
+
+    it("verifies SMTP connection returns true when verify succeeds", async () => {
+      const transporter = InboxService.createSmtpTransporter(smtpConfig);
+      vi.spyOn(transporter, "verify").mockResolvedValue(true as never);
+      vi.spyOn(transporter, "close").mockImplementation(() => {});
+      vi.spyOn(InboxService, "createSmtpTransporter").mockReturnValueOnce(transporter);
+
+      const result = await InboxService.verifySmtpConnection(smtpConfig);
+      expect(result).toBe(true);
+    });
+
+    it("verifies SMTP connection returns false on failure", async () => {
+      const transporter = InboxService.createSmtpTransporter(smtpConfig);
+      vi.spyOn(transporter, "verify").mockRejectedValue(new Error("auth failed"));
+      vi.spyOn(transporter, "close").mockImplementation(() => {});
+      vi.spyOn(InboxService, "createSmtpTransporter").mockReturnValueOnce(transporter);
+
+      const result = await InboxService.verifySmtpConnection(smtpConfig);
+      expect(result).toBe(false);
+    });
+
+    it("sendViaSmtp rejects when no body provided", async () => {
+      await expect(
+        InboxService.sendViaSmtp(smtpConfig, {
+          from: "a@b.com",
+          to: "c@d.com",
+          subject: "Hi",
+        }),
+      ).rejects.toThrow("Either html or text body is required");
+    });
+
+    it("sendViaSmtp sends with html body and returns messageId", async () => {
+      const transporter = InboxService.createSmtpTransporter(smtpConfig);
+      vi.spyOn(transporter, "sendMail").mockResolvedValue({
+        messageId: "<abc123@example.com>",
+        accepted: ["recipient@example.com"],
+        rejected: [],
+      } as never);
+      vi.spyOn(transporter, "close").mockImplementation(() => {});
+      vi.spyOn(InboxService, "createSmtpTransporter").mockReturnValueOnce(transporter);
+
+      const result = await InboxService.sendViaSmtp(smtpConfig, {
+        from: "sender@example.com",
+        to: "recipient@example.com",
+        subject: "Test",
+        html: "<p>Hello</p>",
+      });
+
+      expect(result.messageId).toBe("<abc123@example.com>");
+      expect(result.accepted).toEqual(["recipient@example.com"]);
+      expect(result.rejected).toEqual([]);
+    });
+  });
 });

@@ -1,9 +1,12 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
-import { useJourney, useDeleteJourney, useEnrollContacts } from "@/lib/hooks/use-journeys";
-import { useState } from "react";
+import { useJourney, useDeleteJourney, useEnrollContacts, useAddJourneyStep, useUpdateJourneyStep, useDeleteJourneyStep } from "@/lib/hooks/use-journeys";
+import { useTemplates } from "@/lib/hooks/use-templates";
+import { useUpdateCampaign } from "@/lib/hooks/use-campaigns";
+import { useState, useCallback, useEffect } from "react";
 import Link from "next/link";
+import { Button } from "@/components/ui";
 
 const STATUS_COLORS: Record<string, string> = {
   enrolled: "bg-blue-500/10 text-blue-400",
@@ -15,13 +18,361 @@ const STATUS_COLORS: Record<string, string> = {
   removed: "bg-red-500/10 text-red-400",
 };
 
+interface StepModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  journeyId: string;
+  step?: { id: string; name: string; templateId: string | null; delayDays: number | null; delayHour: number | null };
+  mode: "add" | "edit";
+}
+
+function StepModal({ isOpen, onClose, journeyId, step, mode }: StepModalProps) {
+  const { data: templates } = useTemplates();
+  const addStep = useAddJourneyStep();
+  const updateStep = useUpdateJourneyStep();
+  
+  const [name, setName] = useState(mode === "edit" ? step?.name ?? "" : "");
+  const [templateId, setTemplateId] = useState(step?.templateId ?? "");
+  const [delayDays, setDelayDays] = useState(step?.delayDays ?? 1);
+  const [delayHour, setDelayHour] = useState<number | null>(step?.delayHour ?? 9);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (isOpen) {
+      setName(mode === "edit" ? step?.name ?? "" : "");
+      setTemplateId(step?.templateId ?? "");
+      setDelayDays(step?.delayDays ?? 1);
+      setDelayHour(step?.delayHour ?? 9);
+      setError("");
+    }
+  }, [isOpen, step, mode]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [isOpen, onClose]);
+
+  const handleSubmit = async () => {
+    setError("");
+    if (!name.trim()) {
+      setError("Step name is required");
+      return;
+    }
+    
+    try {
+      if (mode === "edit" && step) {
+        await updateStep.mutateAsync({
+          journeyId,
+          stepId: step.id,
+          data: { templateId: templateId || undefined, delayDays, delayHour },
+        });
+      } else {
+        await addStep.mutateAsync({
+          journeyId,
+          data: { name: name.trim(), templateId: templateId || undefined, delayDays, delayHour },
+        });
+      }
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to save step");
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div 
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div className="w-full max-w-md rounded-xl border border-outline-variant bg-surface-container p-6 shadow-xl">
+        <h3 className="text-lg font-semibold text-on-surface mb-4">
+          {mode === "edit" ? "Edit Step" : "Add New Step"}
+        </h3>
+        
+        <div className="space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-on-surface-variant mb-1">Step Name</label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g., Follow-up 1"
+              className="w-full rounded-lg border border-outline-variant bg-surface px-3 py-2 text-sm text-on-surface focus:border-primary focus:outline-none"
+              disabled={mode === "edit"}
+            />
+          </div>
+          
+          <div>
+            <label className="block text-xs font-medium text-on-surface-variant mb-1">Template</label>
+            <select
+              value={templateId}
+              onChange={(e) => setTemplateId(e.target.value)}
+              className="w-full rounded-lg border border-outline-variant bg-surface px-3 py-2 text-sm text-on-surface focus:border-primary focus:outline-none"
+            >
+              <option value="">Select a template...</option>
+              {templates?.map((t) => (
+                <option key={t.id} value={t.id}>{t.name}</option>
+              ))}
+            </select>
+          </div>
+          
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-on-surface-variant mb-1">Delay (days)</label>
+              <input
+                type="number"
+                min={0}
+                max={365}
+                value={delayDays}
+                onChange={(e) => setDelayDays(parseInt(e.target.value) || 0)}
+                className="w-full rounded-lg border border-outline-variant bg-surface px-3 py-2 text-sm text-on-surface focus:border-primary focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-on-surface-variant mb-1">Send Hour (0-23)</label>
+              <input
+                type="number"
+                min={0}
+                max={23}
+                value={delayHour ?? ""}
+                onChange={(e) => setDelayHour(e.target.value ? parseInt(e.target.value) : null)}
+                placeholder="Optional"
+                className="w-full rounded-lg border border-outline-variant bg-surface px-3 py-2 text-sm text-on-surface focus:border-primary focus:outline-none"
+              />
+            </div>
+          </div>
+          
+          {error && <p className="text-xs text-error">{error}</p>}
+        </div>
+        
+        <div className="mt-6 flex justify-end gap-2">
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleSubmit} 
+            disabled={addStep.isPending || updateStep.isPending}
+          >
+            {addStep.isPending || updateStep.isPending ? "Saving..." : mode === "edit" ? "Update Step" : "Add Step"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface ScheduleModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  journeyId: string;
+  currentScheduledAt: string | null | undefined;
+  journeyName: string;
+}
+
+function ScheduleModal({ isOpen, onClose, journeyId, currentScheduledAt, journeyName }: ScheduleModalProps) {
+  const [mode, setMode] = useState<"now" | "later">(() => (currentScheduledAt ? "later" : "now"));
+  const [scheduledAt, setScheduledAt] = useState(() => {
+    if (!currentScheduledAt) return "";
+    const d = new Date(currentScheduledAt);
+    const pad = (n: number) => n.toString().padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  });
+  const [error, setError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const updateCampaign = useUpdateCampaign();
+
+  // Reset local state when the modal opens (or when currentScheduledAt changes while open)
+  // so reopening reflects the latest props rather than stale state from a prior session.
+  useEffect(() => {
+    if (!isOpen) return;
+    setMode(currentScheduledAt ? "later" : "now");
+    if (currentScheduledAt) {
+      const d = new Date(currentScheduledAt);
+      const pad = (n: number) => n.toString().padStart(2, "0");
+      setScheduledAt(
+        `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`,
+      );
+    } else {
+      setScheduledAt("");
+    }
+    setError("");
+    setIsSubmitting(false);
+  }, [isOpen, currentScheduledAt]);
+
+  // Document-level Escape key listener since the backdrop div can't receive keyboard events
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onClose();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [isOpen, onClose]);
+
+  const handleBackdropClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.target === e.currentTarget) onClose();
+  }, [onClose]);
+
+  const handleEscape = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "Escape") onClose();
+  }, [onClose]);
+
+  const handleSubmit = async () => {
+    setError("");
+
+    if (mode === "later") {
+      if (!scheduledAt) {
+        setError("Please select a date and time");
+        return;
+      }
+      const selected = new Date(scheduledAt);
+      if (isNaN(selected.getTime()) || selected.getTime() <= Date.now()) {
+        setError("Please select a future date and time");
+        return;
+      }
+    }
+
+    setIsSubmitting(true);
+    try {
+      await updateCampaign.mutateAsync({
+        id: journeyId,
+        scheduledAt: mode === "now" ? null : new Date(scheduledAt).toISOString(),
+      });
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to update schedule");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/50 backdrop-blur-sm"
+      onClick={handleBackdropClick}
+      onKeyDown={handleEscape}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="journey-schedule-modal-title"
+    >
+      <div className="w-full max-w-md rounded-2xl border border-outline-variant bg-surface p-6 shadow-xl">
+        <h2 id="journey-schedule-modal-title" className="text-lg font-semibold text-on-surface mb-1">
+          {currentScheduledAt ? "Reschedule Journey" : "Schedule Journey"}
+        </h2>
+        <p className="text-sm text-on-surface-variant mb-6">{journeyName}</p>
+
+        <div className="space-y-4">
+          <div
+            className={`flex items-start gap-3 rounded-xl border p-4 cursor-pointer transition-colors ${
+              mode === "now"
+                ? "border-primary bg-primary/5"
+                : "border-outline-variant hover:border-outline"
+            }`}
+            onClick={() => setMode("now")}
+            role="radio"
+            aria-checked={mode === "now"}
+            tabIndex={0}
+            onKeyDown={(e) => e.key === "Enter" && setMode("now")}
+          >
+            <div
+              className={`mt-0.5 h-5 w-5 rounded-full border-2 flex items-center justify-center ${
+                mode === "now" ? "border-primary" : "border-outline"
+              }`}
+            >
+              {mode === "now" && <div className="h-2.5 w-2.5 rounded-full bg-primary" />}
+            </div>
+            <div>
+              <div className="text-sm font-medium text-on-surface">Start immediately</div>
+              <div className="text-xs text-on-surface-variant">Journey will begin when contacts are enrolled</div>
+            </div>
+          </div>
+
+          <div
+            className={`rounded-xl border p-4 cursor-pointer transition-colors ${
+              mode === "later"
+                ? "border-primary bg-primary/5"
+                : "border-outline-variant hover:border-outline"
+            }`}
+            onClick={() => setMode("later")}
+            role="radio"
+            aria-checked={mode === "later"}
+            tabIndex={0}
+            onKeyDown={(e) => e.key === "Enter" && setMode("later")}
+          >
+            <div className="flex items-start gap-3">
+              <div
+                className={`mt-0.5 h-5 w-5 rounded-full border-2 flex items-center justify-center ${
+                  mode === "later" ? "border-primary" : "border-outline"
+                }`}
+              >
+                {mode === "later" && <div className="h-2.5 w-2.5 rounded-full bg-primary" />}
+              </div>
+              <div>
+                <div className="text-sm font-medium text-on-surface">Schedule for later</div>
+                <div className="text-xs text-on-surface-variant mb-3">Choose when enrolled contacts should start receiving emails</div>
+              </div>
+            </div>
+
+            {mode === "later" && (
+              <div className="mt-3 pl-8">
+                <label htmlFor="journey-schedule-datetime" className="sr-only">
+                  Journey start date and time
+                </label>
+                <input
+                  id="journey-schedule-datetime"
+                  type="datetime-local"
+                  value={scheduledAt}
+                  onChange={(e) => setScheduledAt(e.target.value)}
+                  className="w-full rounded-lg border border-outline-variant bg-surface px-3 py-2 text-sm text-on-surface focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                  aria-invalid={!!error && !scheduledAt}
+                />
+              </div>
+            )}
+          </div>
+
+          {error && (
+            <div role="alert" aria-live="assertive" className="text-xs text-error">
+              {error}
+            </div>
+          )}
+        </div>
+
+        <div className="mt-6 flex justify-end gap-2">
+          <Button variant="secondary" onClick={onClose} disabled={isSubmitting}>
+            Cancel
+          </Button>
+          <Button onClick={handleSubmit} disabled={isSubmitting}>
+            {isSubmitting ? "Saving..." : "Save Schedule"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function JourneyBuilderPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const { data: journey, isLoading, error } = useJourney(id);
   const deleteMutation = useDeleteJourney();
   const enrollMutation = useEnrollContacts();
+  const deleteStepMutation = useDeleteJourneyStep();
   const [enrollIds, setEnrollIds] = useState("");
+  const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
+  const [stepModalState, setStepModalState] = useState<{
+    isOpen: boolean;
+    mode: "add" | "edit";
+    step?: { id: string; name: string; templateId: string | null; delayDays: number | null; delayHour: number | null };
+  }>({ isOpen: false, mode: "add" });
 
   if (isLoading) {
     return (
@@ -63,6 +414,14 @@ export default function JourneyBuilderPage() {
           <h1 className="text-2xl font-semibold tracking-tight text-on-surface">{journey.name}</h1>
         </div>
         <div className="flex items-center gap-2">
+          {journey.scheduledAt && (
+            <span className="text-xs text-on-surface-variant hidden sm:inline">
+              Starts: {new Date(journey.scheduledAt).toLocaleString(undefined, {
+                dateStyle: "medium",
+                timeStyle: "short",
+              })}
+            </span>
+          )}
           <span className={`inline-block rounded-full px-3 py-1 text-xs font-medium ${
             journey.status === "active" ? "bg-green-500/10 text-green-400" :
             journey.status === "paused" ? "bg-amber-500/10 text-amber-400" :
@@ -70,6 +429,13 @@ export default function JourneyBuilderPage() {
           }`}>
             {journey.status}
           </span>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setIsScheduleModalOpen(true)}
+          >
+            {journey.scheduledAt ? "Reschedule" : "Schedule"}
+          </Button>
           <button
             onClick={async () => {
               if (!confirm("Delete this journey? All enrollments will be removed.")) return;
@@ -114,7 +480,18 @@ export default function JourneyBuilderPage() {
 
       {/* Journey Steps Timeline */}
       <div className="rounded-xl border border-outline-variant bg-surface-container-low p-6 mb-6">
-        <h2 className="text-sm font-medium text-on-surface mb-4">Journey Steps</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-medium text-on-surface">Journey Steps</h2>
+          <Button
+            size="sm"
+            onClick={() => setStepModalState({ isOpen: true, mode: "add" })}
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="mr-1">
+              <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+            Add Step
+          </Button>
+        </div>
         <div className="space-y-0">
           {journey.steps?.map((step, i) => (
             <div key={step.id} className="relative flex items-start gap-4">
@@ -135,10 +512,43 @@ export default function JourneyBuilderPage() {
                 <div className="rounded-lg border border-outline-variant bg-surface p-4">
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-sm font-medium text-on-surface">{step.name}</span>
-                    <span className="text-[10px] text-on-surface-variant">
-                      {step.delayDays === 0 ? "Immediately" : `+${step.delayDays} day${step.delayDays !== 1 ? "s" : ""}`}
-                      {step.delayHour !== null && ` at ${step.delayHour}:00`}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-on-surface-variant">
+                        {step.delayDays === 0 ? "Immediately" : `+${step.delayDays} day${step.delayDays !== 1 ? "s" : ""}`}
+                        {step.delayHour !== null && ` at ${step.delayHour}:00`}
+                      </span>
+                      {/* Edit/Delete buttons */}
+                      <button
+                        onClick={() => setStepModalState({ isOpen: true, mode: "edit", step })}
+                        className="p-1 rounded hover:bg-surface-container text-on-surface-variant hover:text-on-surface transition-colors"
+                        title="Edit step"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                        </svg>
+                      </button>
+                      {journey.steps && journey.steps.length > 1 && (
+                        <button
+                          onClick={async () => {
+                            if (!confirm(`Delete step "${step.name}"?`)) return;
+                            try {
+                              await deleteStepMutation.mutateAsync({ journeyId: id, stepId: step.id });
+                            } catch {
+                              // Error handled by mutation
+                            }
+                          }}
+                          disabled={deleteStepMutation.isPending}
+                          className="p-1 rounded hover:bg-error/10 text-on-surface-variant hover:text-error transition-colors disabled:opacity-50"
+                          title="Delete step"
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <polyline points="3 6 5 6 21 6" />
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                          </svg>
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <div className="text-xs text-on-surface-variant">
                     Template: {step.templateId ? (
@@ -160,6 +570,11 @@ export default function JourneyBuilderPage() {
             </div>
           ))}
         </div>
+        {deleteStepMutation.isError && (
+          <div className="mt-4 text-xs text-error">
+            Failed to delete step: {deleteStepMutation.error?.message}
+          </div>
+        )}
       </div>
 
       {/* Enrollment Section */}
@@ -221,6 +636,24 @@ export default function JourneyBuilderPage() {
           </div>
         </div>
       )}
+
+      {/* Schedule Modal */}
+      <ScheduleModal
+        isOpen={isScheduleModalOpen}
+        onClose={() => setIsScheduleModalOpen(false)}
+        journeyId={id}
+        currentScheduledAt={(journey as { scheduledAt?: string | null }).scheduledAt}
+        journeyName={journey.name}
+      />
+
+      {/* Step Modal (Add/Edit) */}
+      <StepModal
+        isOpen={stepModalState.isOpen}
+        onClose={() => setStepModalState({ isOpen: false, mode: "add" })}
+        journeyId={id}
+        step={stepModalState.step}
+        mode={stepModalState.mode}
+      />
     </div>
   );
 }

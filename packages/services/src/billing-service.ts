@@ -301,4 +301,121 @@ export class BillingService {
   static async listPlans() {
     return db.select().from(billingPlans).orderBy(billingPlans.monthlyPrice);
   }
+
+  /**
+   * Record email usage and track in external API usage log
+   * This should be called when emails are actually sent via Resend
+   */
+  static async recordEmailUsage(
+    accountId: string,
+    apiKeyId: string | undefined,
+    count: number,
+    metadata?: {
+      campaignId?: string;
+      messageId?: string;
+      status?: string;
+    }
+  ): Promise<void> {
+    // Increment billing counter
+    await BillingService.incrementUsage(accountId, "emails", count);
+
+    // Track in external API usage log for per-key tracking
+    const { ExternalApiUsageService } = await import("./external-api-usage-service.js");
+
+    // Validate status with runtime check instead of unsafe cast
+    const validStatuses = new Set(["sent", "delivered", "bounced", "complained", "opened", "clicked"]);
+    const status: "sent" | "delivered" | "bounced" | "complained" | "opened" | "clicked" =
+      metadata?.status && validStatuses.has(metadata.status)
+        ? (metadata.status as "sent" | "delivered" | "bounced" | "complained" | "opened" | "clicked")
+        : "sent";
+
+    await ExternalApiUsageService.recordResendUsage({
+      accountId,
+      apiKeyId,
+      campaignId: metadata?.campaignId,
+      messageId: metadata?.messageId,
+      status,
+      emailCount: count,
+    });
+  }
+
+  /**
+   * Record LLM token usage and track in external API usage log
+   * This should be called when LLM API calls are made
+   */
+  static async recordLlmUsage(
+    accountId: string,
+    apiKeyId: string | undefined,
+    inputTokens: number,
+    outputTokens: number,
+    metadata?: {
+      provider?: string;
+      model?: string;
+      purpose?: string;
+      latencyMs?: number;
+    }
+  ): Promise<boolean> {
+    const totalTokens = inputTokens + outputTokens;
+
+    // Increment billing counter
+    await BillingService.incrementUsage(accountId, "llmTokens", totalTokens);
+
+    // Track in external API usage log for per-key tracking
+    const { ExternalApiUsageService } = await import("./external-api-usage-service.js");
+    const recorded = await ExternalApiUsageService.recordLlmUsage({
+      accountId,
+      apiKeyId,
+      provider: metadata?.provider || "gemini",
+      model: metadata?.model || "default",
+      purpose: metadata?.purpose || "general",
+      inputTokens,
+      outputTokens,
+      latencyMs: metadata?.latencyMs,
+    });
+
+    if (!recorded) {
+      console.warn(`[BillingService] Failed to record LLM usage for account ${accountId}`);
+    }
+
+    return recorded;
+  }
+
+  /**
+   * Record Hunter API usage and track in external API usage log
+   * This should be called when Hunter API calls are made
+   */
+  static async recordHunterUsage(
+    accountId: string,
+    apiKeyId: string | undefined,
+    endpoint: "domain_search" | "email_finder" | "email_verifier" | "account_information",
+    metadata?: {
+      domain?: string;
+      email?: string;
+      resultFound?: boolean;
+      latencyMs?: number;
+    }
+  ): Promise<void> {
+    // Increment billing counter
+    await BillingService.incrementUsage(accountId, "hunterCredits", 1);
+
+    // Track in external API usage log for per-key tracking
+    const { ExternalApiUsageService } = await import("./external-api-usage-service.js");
+    await ExternalApiUsageService.recordHunterUsage({
+      accountId,
+      apiKeyId,
+      endpoint,
+      domain: metadata?.domain,
+      email: metadata?.email,
+      resultFound: metadata?.resultFound,
+      latencyMs: metadata?.latencyMs,
+    });
+  }
+
+  /**
+   * Record API call usage
+   * This should be called for REST API quota tracking
+   */
+  static async recordApiCallUsage(accountId: string, count = 1): Promise<void> {
+    await BillingService.incrementUsage(accountId, "apiCalls", count);
+  }
 }

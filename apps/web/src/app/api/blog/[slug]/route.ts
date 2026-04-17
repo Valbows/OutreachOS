@@ -14,13 +14,28 @@ const updateSchema = z.object({
   publishedAt: z.string().datetime().nullable().optional(),
 });
 
-/** Public: get post by slug */
+/** Public: get post by slug, or admin: get draft/published by ID when ?admin=true */
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ slug: string }> },
 ) {
   try {
     const { slug } = await params;
+    const isAdmin = request.nextUrl.searchParams.get("admin") === "true";
+
+    if (isAdmin) {
+      const account = await getAuthAccount();
+      if (!account) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      }
+      // admin lookup uses slug param as post ID
+      const post = await BlogService.getById(account.id, slug);
+      if (!post) {
+        return NextResponse.json({ error: "Post not found" }, { status: 404 });
+      }
+      return NextResponse.json({ data: post });
+    }
+
     const post = await BlogService.getBySlug(slug);
     if (!post) {
       return NextResponse.json({ error: "Post not found" }, { status: 404 });

@@ -18,6 +18,26 @@ const CAMPAIGN_TYPES = [
     ),
   },
   {
+    value: "journey",
+    label: "Journey (Multi-Step)",
+    description: "Automated multi-step email sequences with delays",
+    icon: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+        <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+  {
+    value: "funnel",
+    label: "Funnel",
+    description: "Conditional email flows based on contact behavior",
+    icon: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+        <path d="M12 2v20M2 12h20M2 7l20-5M2 17l20 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+  {
     value: "ab_test",
     label: "A/B Test",
     description: "Test subject lines with small batches, then send the winner",
@@ -50,6 +70,8 @@ export default function NewCampaignPage() {
   const [name, setName] = useState("");
   const [groupId, setGroupId] = useState("");
   const [templateId, setTemplateId] = useState("");
+  const [sendMode, setSendMode] = useState<"now" | "schedule">("now");
+  const [scheduledAt, setScheduledAt] = useState<string>(""); // ISO local (yyyy-MM-ddTHH:mm)
   const [error, setError] = useState<string | null>(null);
 
   async function handleCreate() {
@@ -57,12 +79,32 @@ export default function NewCampaignPage() {
 
     setError(null);
 
+    // Validate schedule input when "Schedule for later" is chosen
+    let scheduledAtIso: string | undefined;
+    if (sendMode === "schedule") {
+      if (!scheduledAt) {
+        setError("Please pick a date and time to schedule.");
+        return;
+      }
+      const scheduleDate = new Date(scheduledAt);
+      if (Number.isNaN(scheduleDate.getTime())) {
+        setError("Invalid date and time.");
+        return;
+      }
+      if (scheduleDate.getTime() <= Date.now()) {
+        setError("Scheduled time must be in the future.");
+        return;
+      }
+      scheduledAtIso = scheduleDate.toISOString();
+    }
+
     try {
       const result = await createMutation.mutateAsync({
         name,
         type: selectedType,
         groupId: groupId || undefined,
         templateId: templateId || undefined,
+        scheduledAt: scheduledAtIso,
       });
 
       // Validate response shape before navigating
@@ -73,6 +115,10 @@ export default function NewCampaignPage() {
 
       if (selectedType === "ab_test") {
         router.push(`/campaigns/ab-test/setup?campaignId=${campaignId}`);
+      } else if (selectedType === "journey") {
+        router.push(`/campaigns/journey/${campaignId}`);
+      } else if (selectedType === "funnel") {
+        router.push(`/campaigns/funnel/${campaignId}`);
       } else {
         router.push(`/campaigns/${campaignId}/analytics`);
       }
@@ -97,7 +143,7 @@ export default function NewCampaignPage() {
 
       {/* Step indicator */}
       <div className="flex items-center gap-2 mb-8">
-        {[1, 2].map((s) => (
+        {[1, 2, 3].map((s) => (
           <div key={s} className="flex items-center gap-2">
             <div
               className={`h-8 w-8 rounded-full flex items-center justify-center text-sm font-medium ${
@@ -108,7 +154,7 @@ export default function NewCampaignPage() {
             >
               {s}
             </div>
-            {s < 2 && (
+            {s < 3 && (
               <div className={`h-0.5 w-12 ${step > s ? "bg-primary" : "bg-outline-variant"}`} />
             )}
           </div>
@@ -206,13 +252,134 @@ export default function NewCampaignPage() {
                 Back
               </button>
               <button
-                onClick={handleCreate}
-                disabled={!name || createMutation.isPending}
+                onClick={() => {
+                  setError(null);
+                  setStep(3);
+                }}
+                disabled={!name}
                 className="rounded-lg bg-primary px-6 py-2 text-sm font-medium text-on-primary hover:bg-primary/90 transition-colors disabled:opacity-50"
               >
-                {createMutation.isPending ? "Creating..." : "Create Campaign"}
+                Next: Schedule
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {step === 3 && (
+        <div>
+          <h2 className="text-lg font-medium mb-4">Schedule</h2>
+          <p className="text-sm text-on-surface-variant mb-6">
+            Choose when this campaign should be sent.
+          </p>
+
+          <div className="space-y-3 mb-6">
+            <div
+              className={`flex items-start gap-4 rounded-xl border p-4 transition-all ${
+                sendMode === "now"
+                  ? "border-primary bg-primary/5"
+                  : "border-outline-variant bg-surface-container-low"
+              }`}
+            >
+              <input
+                id="send-mode-now"
+                type="radio"
+                name="send-mode"
+                value="now"
+                checked={sendMode === "now"}
+                onChange={() => {
+                  setSendMode("now");
+                  setError(null);
+                }}
+                className="mt-0.5 accent-primary"
+              />
+              <label htmlFor="send-mode-now" className="flex-1 cursor-pointer">
+                <div className="font-medium text-on-surface">Send immediately</div>
+                <div className="text-xs text-on-surface-variant mt-0.5">
+                  Campaign will be saved as a draft. You can review and send it right away from the analytics page.
+                </div>
+              </label>
+            </div>
+
+            <div
+              className={`flex items-start gap-4 rounded-xl border p-4 transition-all ${
+                sendMode === "schedule"
+                  ? "border-primary bg-primary/5"
+                  : "border-outline-variant bg-surface-container-low"
+              }`}
+            >
+              <input
+                id="send-mode-schedule"
+                type="radio"
+                name="send-mode"
+                value="schedule"
+                checked={sendMode === "schedule"}
+                onChange={() => {
+                  setSendMode("schedule");
+                  setError(null);
+                }}
+                className="mt-0.5 accent-primary"
+              />
+              <div className="flex-1">
+                <label htmlFor="send-mode-schedule" className="block cursor-pointer">
+                  <div className="font-medium text-on-surface">Schedule for later</div>
+                  <div className="text-xs text-on-surface-variant mt-0.5 mb-3">
+                    We&apos;ll queue the campaign and auto-send at the time you pick (in your local timezone).
+                  </div>
+                </label>
+                {sendMode === "schedule" && (
+                  <div>
+                    <label htmlFor="scheduled-at" className="block text-xs font-medium text-on-surface-variant mb-1">
+                      Scheduled date and time
+                    </label>
+                    <input
+                      id="scheduled-at"
+                      type="datetime-local"
+                      value={scheduledAt}
+                      onChange={(e) => {
+                        setScheduledAt(e.target.value);
+                        setError(null);
+                      }}
+                      className="w-full rounded-lg border border-outline-variant bg-surface px-3 py-2 text-sm text-on-surface focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {error && (
+            <div
+              role="alert"
+              className="mb-4 rounded-lg border border-error bg-error/5 px-4 py-2 text-sm text-error"
+            >
+              {error}
+            </div>
+          )}
+
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                setError(null);
+                setStep(2);
+              }}
+              className="rounded-lg border border-outline-variant px-4 py-2 text-sm font-medium text-on-surface hover:bg-surface-container transition-colors"
+            >
+              Back
+            </button>
+            <button
+              type="button"
+              onClick={handleCreate}
+              disabled={!name || createMutation.isPending}
+              className="rounded-lg bg-primary px-6 py-2 text-sm font-medium text-on-primary hover:bg-primary/90 transition-colors disabled:opacity-50"
+            >
+              {createMutation.isPending
+                ? "Creating..."
+                : sendMode === "schedule"
+                  ? "Schedule Campaign"
+                  : "Create Campaign"}
+            </button>
           </div>
         </div>
       )}

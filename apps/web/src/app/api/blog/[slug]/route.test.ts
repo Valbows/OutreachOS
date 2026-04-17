@@ -8,6 +8,7 @@ vi.mock("@/lib/auth/session", () => ({
 vi.mock("@outreachos/services", () => ({
   BlogService: {
     getBySlug: vi.fn(),
+    getById: vi.fn(),
     update: vi.fn(),
     delete: vi.fn(),
   },
@@ -39,6 +40,44 @@ describe("GET /api/blog/[slug]", () => {
     vi.mocked(BlogService.getBySlug).mockResolvedValueOnce(null as any);
 
     const response = await GET(createMockRequest("http://localhost/api/blog/not-found"), { params });
+
+    expect(response.status).toBe(404);
+  });
+
+  it("returns 401 when ?admin=true and not authenticated", async () => {
+    vi.mocked(getAuthAccount).mockResolvedValueOnce(null);
+
+    const response = await GET(
+      createMockRequest("http://localhost/api/blog/p1?admin=true"),
+      { params: Promise.resolve({ slug: "p1" }) },
+    );
+
+    expect(response.status).toBe(401);
+  });
+
+  it("returns post by ID when ?admin=true", async () => {
+    vi.mocked(getAuthAccount).mockResolvedValueOnce(createMockAccount());
+    vi.mocked(BlogService.getById).mockResolvedValueOnce({ id: "p1", title: "Draft Post" } as any);
+
+    const response = await GET(
+      createMockRequest("http://localhost/api/blog/p1?admin=true"),
+      { params: Promise.resolve({ slug: "p1" }) },
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(BlogService.getById).toHaveBeenCalledWith("acc-123", "p1");
+    expect(data.data.title).toBe("Draft Post");
+  });
+
+  it("returns 404 when admin post not found", async () => {
+    vi.mocked(getAuthAccount).mockResolvedValueOnce(createMockAccount());
+    vi.mocked(BlogService.getById).mockResolvedValueOnce(null as any);
+
+    const response = await GET(
+      createMockRequest("http://localhost/api/blog/missing?admin=true"),
+      { params: Promise.resolve({ slug: "missing" }) },
+    );
 
     expect(response.status).toBe(404);
   });
