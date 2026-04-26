@@ -2102,4 +2102,39 @@ While reproducing locally, my stale `packages/services/dist/index.js` also repor
 - Match the codebase convention: extensionless relative imports for `.ts` files in app source.
 - Reserve explicit `.js` extensions for **published packages** built with tsup/Rollup that emit native ESM (where Node's ESM loader requires extensions). For app-internal code under bundler resolution, omit the extension.
 
+---
 
+## 2026-04-26 — Bug Fix: Neon WebSocket driver fails on local Postgres in CI
+
+**Type:** Build/deployment (DB driver compatibility)
+**Impact:** Blocking — `next build` fails during static generation for `/blog/[slug]`
+
+### Failure
+```
+Failed query: select "slug" from "blog_posts" where "blog_posts"."published_at" is not null
+[cause]: AggregateError: ECONNREFUSED wss://localhost/v2
+```
+
+### Root Cause
+`packages/db/src/drizzle.ts` used `@neondatabase/serverless` Pool with WebSocket (`wss://`) for all connections. The CI Postgres service in `deploy.yml` is a standard Postgres container that only accepts TCP connections on port 5432, not WebSocket.
+
+The `generateStaticParams` in `/blog/[slug]/page.tsx` calls `getAllSlugs()` which queries the DB during build. With `DATABASE_URL=postgresql://outreachos:outreachos_test@localhost:5432/outreachos_test`, the Neon driver tried `wss://localhost/v2` which doesn't exist in the CI environment.
+
+### Fix
+Updated `packages/db/src/drizzle.ts` to auto-detect local/CI Postgres vs Neon:
+- Added `isLocalPostgres(url)` helper that checks hostname for:
+  - `localhost`, `127.0.0.1`
+  - Private IP ranges: `10.x.x.x`, `172.16-31.x.x`, `192.168.x.x`
+- For local/CI: uses `pg` Pool with `drizzle-orm/node-postgres` (TCP)
+- For production: uses `@neondatabase/serverless` Pool with `drizzle-orm/neon-serverless` (WebSocket)
+
+Added `pg` and `@types/pg` dependencies to `packages/db/package.json`.
+
+### Verification
+- `pnpm run build`: success (4 tasks, 0 failed)
+- `pnpm run lint`: clean
+- `pnpm --filter @outreachos/web type-check`: clean
+- `pnpm --filter @outreachos/web exec vitest run`: 695/695 passing
+
+### Architecture Decision
+This dual-driver approach is temporary. Once the migration to full Neon hosting is complete, the TCP path can be removed. For now, it ensures CI builds work with local Postgres while production uses Neon serverless.
