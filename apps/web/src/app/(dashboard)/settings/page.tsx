@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Card, CardHeader, CardTitle, CardContent, Input, Button, Modal, Select, Switch } from "@/components/ui";
 import { authClient } from "@/lib/auth/client";
 import { IntegrationsSection } from "./integrations-section";
@@ -316,125 +316,225 @@ function InboxSection() {
     openrouter: "",
   });
 
-  useEffect(() => {
-    let cancelled = false;
+  // Popup OAuth flow state
+  const popupCheckInterval = useRef<NodeJS.Timeout | null>(null);
+  const messageHandlerRef = useRef<((event: MessageEvent) => void) | null>(null);
+  const oauthInProgressRef = useRef(false);
 
-    async function loadSettings() {
-      // Run Gmail sync first to check for newly-linked accounts, but don't set state yet.
-      // Store result locally to avoid race with preferences fetch.
-      let tempSyncGmail: string | null = null;
-      try {
-        const syncRes = await fetch("/api/auth/google/sync", { method: "POST" });
-        if (syncRes.ok) {
-          const syncData = await syncRes.json();
-          console.log("[Settings] Gmail sync response:", syncData);
-          if (syncData.linked && syncData.gmailAddress) {
-            tempSyncGmail = syncData.gmailAddress;
-            // Note: Do NOT set success toast here - only OAuth callback should do that
-          } else if (!syncData.linked) {
-            console.warn("[Settings] Gmail sync returned linked:false, debug:", syncData.debug);
+  // Load settings function - defined outside useEffect so it can be called from multiple places
+  const loadSettings = useCallback(async () => {
+    // Run Gmail sync first to check for newly-linked accounts, but don't set state yet.
+    // Store result locally to avoid race with preferences fetch.
+    let tempSyncGmail: string | null = null;
+    try {
+      const syncRes = await fetch("/api/auth/google/sync", { method: "POST" });
+      if (syncRes.ok) {
+        const syncData = await syncRes.json();
+        console.log("[Settings] Gmail sync response:", syncData);
+        if (syncData.linked && syncData.gmailAddress) {
+          tempSyncGmail = syncData.gmailAddress;
+          // Note: Do NOT set success toast here - only OAuth callback should do that
+        } else if (!syncData.linked) {
+          console.warn("[Settings] Gmail sync returned linked:false, debug:", syncData.debug);
+          if (oauthInProgressRef.current) {
             setOauthError(`Gmail not linked. Accounts found: ${syncData.debug?.accountCount || 0}`);
           }
-        } else {
-          console.error("[Settings] Gmail sync failed:", syncRes.status);
+        }
+      } else {
+        console.error("[Settings] Gmail sync failed:", syncRes.status);
+        if (oauthInProgressRef.current) {
           setOauthError(`Sync failed with status ${syncRes.status}`);
         }
-      } catch (e) {
-        console.error("[Settings] Gmail sync error:", e);
+      }
+    } catch (e) {
+      console.error("[Settings] Gmail sync error:", e);
+      if (oauthInProgressRef.current) {
         setOauthError(`Sync error: ${e instanceof Error ? e.message : String(e)}`);
-      }
-
-      const results = await Promise.allSettled([
-        fetch("/api/settings/preferences"),
-        fetch("/api/settings/byok"),
-      ]);
-
-      if (cancelled) return;
-
-      const [preferencesResult, byokResult] = results;
-
-      // --- preferences ---
-      try {
-        if (preferencesResult.status === "rejected") {
-          throw preferencesResult.reason as Error;
-        }
-        const res = preferencesResult.value;
-        if (!res.ok) throw new Error("Failed to load AI preferences");
-        const data = (await res.json()) as PreferencesResponse;
-        if (!cancelled) {
-          setLlmProvider(data.data.llmProvider ?? "gemini");
-          setLlmModel(data.data.llmModel ?? "");
-          setSenderDomain(data.data.senderDomain ?? "");
-          // Prefer preferences gmailAddress, fallback to sync result if needed
-          setGmailAddress(data.data.gmailAddress || tempSyncGmail || "");
-          setGmailConnected(data.data.gmailConnected ?? false);
-          setPreferencesError(null);
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setPreferencesError(
-            error instanceof Error ? error.message : "Failed to load AI preferences",
-          );
-        }
-      } finally {
-        if (!cancelled) setPreferencesLoading(false);
-      }
-
-      // --- BYOK ---
-      try {
-        if (byokResult.status === "rejected") {
-          throw byokResult.reason as Error;
-        }
-        const res = byokResult.value;
-        if (!res.ok) throw new Error("Failed to load BYOK settings");
-        const data = (await res.json()) as ByokResponse;
-        if (!cancelled) {
-          setConfiguredProviders(data.providers ?? {});
-          setByokError(null);
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setByokError(
-            error instanceof Error ? error.message : "Failed to load BYOK settings",
-          );
-        }
-      } finally {
-        if (!cancelled) setByokLoading(false);
       }
     }
 
-    void loadSettings();
+    const results = await Promise.allSettled([
+      fetch("/api/settings/preferences"),
+      fetch("/api/settings/byok"),
+    ]);
 
-    return () => {
-      cancelled = true;
-    };
+    const [preferencesResult, byokResult] = results;
+
+    // --- preferences ---
+    try {
+      if (preferencesResult.status === "rejected") {
+        throw preferencesResult.reason as Error;
+      }
+      const res = preferencesResult.value;
+      if (!res.ok) throw new Error("Failed to load AI preferences");
+      const data = (await res.json()) as PreferencesResponse;
+      setLlmProvider(data.data.llmProvider ?? "gemini");
+      setLlmModel(data.data.llmModel ?? "");
+      setSenderDomain(data.data.senderDomain ?? "");
+      // Prefer preferences gmailAddress, fallback to sync result if needed
+      setGmailAddress(data.data.gmailAddress || tempSyncGmail || "");
+      setGmailConnected(data.data.gmailConnected ?? false);
+      setPreferencesError(null);
+    } catch (error) {
+      setPreferencesError(
+        error instanceof Error ? error.message : "Failed to load AI preferences",
+      );
+    } finally {
+      setPreferencesLoading(false);
+    }
+
+    // --- BYOK ---
+    try {
+      if (byokResult.status === "rejected") {
+        throw byokResult.reason as Error;
+      }
+      const res = byokResult.value;
+      if (!res.ok) throw new Error("Failed to load BYOK settings");
+      const data = (await res.json()) as ByokResponse;
+      setConfiguredProviders(data.providers ?? {});
+      setByokError(null);
+    } catch (error) {
+      setByokError(
+        error instanceof Error ? error.message : "Failed to load BYOK settings",
+      );
+    } finally {
+      setByokLoading(false);
+    }
   }, []);
 
+  // Check for OAuth callback params on page load (popup redirects here)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const gmailConnected = params.get("gmail_connected");
+    const gmailEmail = params.get("gmail_email");
+    const oauthError = params.get("oauth_error");
+    
+    if (gmailConnected === "true" && gmailEmail) {
+      setGmailAddress(decodeURIComponent(gmailEmail));
+      setGmailConnected(true);
+      setOauthError(null);
+      // Clean up URL params
+      window.history.replaceState({}, "", window.location.pathname);
+    } else if (oauthError) {
+      setOauthError(`OAuth failed: ${decodeURIComponent(oauthError)}`);
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadSettings();
+  }, [loadSettings]);
+
   async function handleGoogleConnect() {
+    oauthInProgressRef.current = true;
     setOauthPending(true);
     setOauthError(null);
+    console.log("[OAuth] Starting direct Google OAuth flow...");
+    
     try {
-      const { error } = await authClient.signIn.social({
-        provider: "google",
-        callbackURL: "/settings",
-        scopes: [
-          "https://www.googleapis.com/auth/gmail.readonly",
-          "https://www.googleapis.com/auth/gmail.send",
-          "https://www.googleapis.com/auth/userinfo.email",
-          "https://www.googleapis.com/auth/userinfo.profile",
-        ],
+      // Call our API to get the Google OAuth URL
+      const res = await fetch("/api/auth/google/initiate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
       });
-      if (error) {
-        console.error("Google OAuth error:", error);
-        setOauthError("Failed to connect Google account. Please try again.");
+
+      if (!res.ok) {
+        const error = await res.text();
+        console.error("[OAuth] Initiate failed:", error);
+        setOauthError("Failed to initiate Google OAuth. Please try again.");
         setOauthPending(false);
+        return;
       }
+
+      const { url } = await res.json();
+      if (!url) {
+        setOauthError("Failed to get OAuth URL");
+        setOauthPending(false);
+        return;
+      }
+
+      // Open OAuth in popup
+      const popup = window.open(
+        url,
+        "google-oauth-link",
+        "width=500,height=600,scrollbars=yes,resizable=yes"
+      );
+
+      if (!popup) {
+        setOauthError("Popup blocked. Please allow popups for this site.");
+        setOauthPending(false);
+        return;
+      }
+
+      // Per-attempt flag — prevents both the postMessage handler and the
+      // interval fallback from both calling loadSettings() in a race.
+      const oauthCompleted = { current: false };
+
+      const completeOAuth = (outcome: { gmailEmail?: string; error?: string } | null) => {
+        if (oauthCompleted.current) return;
+        oauthCompleted.current = true;
+        clearInterval(popupCheckInterval.current!);
+        window.removeEventListener('message', messageHandler);
+        messageHandlerRef.current = null;
+        oauthInProgressRef.current = false;
+        if (outcome?.gmailEmail) {
+          setGmailAddress(outcome.gmailEmail);
+          setGmailConnected(true);
+          setOauthError(null);
+        } else if (outcome?.error) {
+          setOauthError(`OAuth failed: ${outcome.error}`);
+        }
+        setOauthPending(false);
+        void loadSettings();
+      };
+
+      // The callback page is served from the same origin as this app.
+      const expectedOrigin = window.location.origin;
+
+      // Listen for postMessage from popup
+      const messageHandler = (event: MessageEvent) => {
+        if (event.origin !== expectedOrigin) return;
+        if (event.data.type !== 'oauth_callback') return;
+        console.log("[OAuth] Received postMessage:", event.data);
+        popup.close();
+        completeOAuth(
+          event.data.success && event.data.gmailEmail
+            ? { gmailEmail: event.data.gmailEmail }
+            : { error: event.data.error ?? "Unknown error" }
+        );
+      };
+      
+      messageHandlerRef.current = messageHandler;
+      window.addEventListener('message', messageHandler);
+      
+      // Fallback: poll for popup closing if postMessage doesn't work
+      popupCheckInterval.current = setInterval(() => {
+        if (popup.closed) {
+          console.log("[OAuth] Popup closed without postMessage");
+          // Pass null — no outcome data; loadSettings will check silently
+          completeOAuth(null);
+        }
+      }, 1000);
+
     } catch (error) {
-      console.error("Google OAuth exception:", error);
+      console.error("[OAuth] Google OAuth exception:", error);
+      oauthInProgressRef.current = false;
       setOauthError("Failed to connect Google account. Please try again.");
       setOauthPending(false);
     }
   }
+
+  // Cleanup interval and message listener on unmount
+  useEffect(() => {
+    return () => {
+      if (popupCheckInterval.current) {
+        clearInterval(popupCheckInterval.current);
+      }
+      if (messageHandlerRef.current) {
+        window.removeEventListener('message', messageHandlerRef.current);
+      }
+    };
+  }, []);
 
   async function handleGoogleDisconnect() {
     setIsDisconnecting(true);

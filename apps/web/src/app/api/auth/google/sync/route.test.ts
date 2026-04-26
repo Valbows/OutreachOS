@@ -1,13 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createMockAccount } from "@/test/api-helpers";
 
-const { mockGetAuthAccount, mockListAccounts, mockDbUpdate, mockWhere, mockSet } = vi.hoisted(() => {
+const { mockGetAuthAccount, mockListAccounts, mockDbUpdate, mockWhere, mockSet, mockDbSelect, mockSelectFrom, mockSelectWhere, mockSelectLimit } = vi.hoisted(() => {
   const mockGetAuthAccount = vi.fn();
   const mockListAccounts = vi.fn();
   const mockWhere = vi.fn().mockResolvedValue(undefined);
   const mockSet = vi.fn().mockReturnValue({ where: mockWhere });
   const mockDbUpdate = vi.fn().mockReturnValue({ set: mockSet });
-  return { mockGetAuthAccount, mockListAccounts, mockDbUpdate, mockWhere, mockSet };
+  const mockSelectLimit = vi.fn().mockResolvedValue([]);
+  const mockSelectWhere = vi.fn().mockReturnValue({ limit: mockSelectLimit });
+  const mockSelectFrom = vi.fn().mockReturnValue({ where: mockSelectWhere });
+  const mockDbSelect = vi.fn().mockReturnValue({ from: mockSelectFrom });
+  return { mockGetAuthAccount, mockListAccounts, mockDbUpdate, mockWhere, mockSet, mockDbSelect, mockSelectFrom, mockSelectWhere, mockSelectLimit };
 });
 
 vi.mock("@/lib/auth/session", () => ({
@@ -21,8 +25,8 @@ vi.mock("@/lib/auth/server", () => ({
 }));
 
 vi.mock("@outreachos/db", () => ({
-  db: { update: mockDbUpdate },
-  accounts: { id: "id", gmailAddress: "gmailAddress", gmailRefreshToken: "gmailRefreshToken" },
+  db: { update: mockDbUpdate, select: mockDbSelect },
+  accounts: { id: "id", gmailAddress: "gmailAddress", gmailRefreshTokenEncrypted: "gmailRefreshTokenEncrypted" },
 }));
 
 vi.mock("drizzle-orm", () => ({
@@ -56,7 +60,7 @@ describe("POST /api/auth/google/sync", () => {
     expect(body.debug.accounts).toEqual([]);
     expect(mockDbUpdate).toHaveBeenCalledOnce();
     expect(mockSet).toHaveBeenCalledWith(
-      expect.objectContaining({ gmailAddress: null, gmailRefreshToken: null }),
+      expect.objectContaining({ gmailAddress: null, gmailRefreshTokenEncrypted: null }),
     );
   });
 
@@ -137,7 +141,7 @@ describe("POST /api/auth/google/sync", () => {
     expect(body.debug.accountCount).toBe(0);
     expect(mockDbUpdate).toHaveBeenCalledOnce();
     expect(mockSet).toHaveBeenCalledWith(
-      expect.objectContaining({ gmailAddress: null, gmailRefreshToken: null }),
+      expect.objectContaining({ gmailAddress: null, gmailRefreshTokenEncrypted: null }),
     );
   });
 
@@ -174,7 +178,7 @@ describe("POST /api/auth/google/sync", () => {
     expect(body.linked).toBe(false);
     expect(body.debug.accountCount).toBe(2);
     expect(mockSet).toHaveBeenCalledWith(
-      expect.objectContaining({ gmailAddress: null, gmailRefreshToken: null }),
+      expect.objectContaining({ gmailAddress: null, gmailRefreshTokenEncrypted: null }),
     );
   });
 

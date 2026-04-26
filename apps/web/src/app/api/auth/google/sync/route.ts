@@ -29,6 +29,7 @@ import { eq } from "drizzle-orm";
 export async function POST() {
   try {
     const account = await getAuthAccount();
+
     if (!account) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -45,7 +46,7 @@ export async function POST() {
       // Clear Gmail fields and return linked: false when no data available
       await db
         .update(accounts)
-        .set({ gmailAddress: null, gmailRefreshToken: null, updatedAt: new Date() })
+        .set({ gmailAddress: null, gmailRefreshTokenEncrypted: null, updatedAt: new Date() })
         .where(eq(accounts.id, account.id));
       return NextResponse.json({ linked: false, debug: { accountCount: 0 } });
     }
@@ -89,10 +90,26 @@ export async function POST() {
     console.log("[Gmail Sync] Google account found:", !!google);
 
     if (!google) {
+      // Fallback: Check database for custom OAuth flow storage
+      // Our custom OAuth flow stores gmailAddress directly in the database
+      console.log("[Gmail Sync] No Neon Auth Google provider, checking database for custom OAuth, accountId:", account.id);
+
+      const [accountRecord] = await db
+        .select({ gmailAddress: accounts.gmailAddress })
+        .from(accounts)
+        .where(eq(accounts.id, account.id))
+        .limit(1);
+
+      if (accountRecord?.gmailAddress) {
+        const maskedGmail = accountRecord.gmailAddress.replace(/(.{2}).*(@.*)/, "$1***$2");
+        console.log("[Gmail Sync] Found Gmail in database from custom OAuth:", maskedGmail);
+        return NextResponse.json({ linked: true, gmailAddress: accountRecord.gmailAddress, debug: { source: "custom_oauth" } });
+      }
+
       // No Google account linked — clear stale Gmail fields unconditionally
       await db
         .update(accounts)
-        .set({ gmailAddress: null, gmailRefreshToken: null, updatedAt: new Date() })
+        .set({ gmailAddress: null, gmailRefreshTokenEncrypted: null, updatedAt: new Date() })
         .where(eq(accounts.id, account.id));
       // Sanitize accounts to only expose non-sensitive metadata
       const sanitizedAccounts = linkedAccounts.map((acc: unknown) => {
