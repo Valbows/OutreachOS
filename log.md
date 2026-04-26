@@ -2217,3 +2217,32 @@ The fix was applied but CI still failed because `@outreachos/services:build` had
 Graceful degradation for static generation is preferred over hard build failures. The blog functionality is additive—if the table exists, static pages are generated; if not, the routes become dynamic. This aligns with the "progressive enhancement" philosophy and prevents build-time coupling to database migration order.
 
 **Secondary lesson:** When a fix in a dependency package doesn't propagate to CI, check turbo cache. Turborepo caches build outputs based on file hashes; a trivial comment change invalidates the cache.
+
+---
+
+## 2026-04-26 — Bug Fix: Playwright not found in CI workflow
+
+**Type:** Build/deployment (CI workflow)
+**Impact:** Blocking — E2E tests cannot start
+
+### Failure
+```
+ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL Command "playwright" not found
+```
+
+### Root Cause
+The `playwright.yml` workflow ran `pnpm exec playwright install` from the repository root. However, `@playwright/test` is only installed as a devDependency in `apps/web/package.json`, not in the root workspace. `pnpm exec` from root cannot find binaries from nested workspaces.
+
+### Fix
+Updated `.github/workflows/playwright.yml` (both `functional-tests` and `security-tests` jobs):
+- Changed: `pnpm exec playwright install --with-deps chromium`
+- To: `pnpm --filter @outreachos/web exec playwright install --with-deps chromium`
+
+This runs the playwright binary from the correct workspace where it's installed.
+
+### Verification
+- Local check: `pnpm --filter @outreachos/web exec playwright --version` returns version
+- Workflow syntax validated
+
+### Lesson
+In monorepos with pnpm workspaces, `pnpm exec` from root only sees binaries from root `package.json`. Use `pnpm --filter <workspace> exec <command>` to run binaries from specific workspaces.

@@ -53,7 +53,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Install Playwright browsers
-        run: pnpm exec playwright install --with-deps chromium
+        run: pnpm --filter @outreachos/web exec playwright install --with-deps chromium
 
       - name: Build application
         run: pnpm run build
@@ -118,7 +118,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Install Playwright browsers
-        run: pnpm exec playwright install --with-deps chromium
+        run: pnpm --filter @outreachos/web exec playwright install --with-deps chromium
 
       - name: Build application
         run: pnpm run build
