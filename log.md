@@ -1964,3 +1964,13 @@ Removed the `version: 9` input from both jobs in `.github/workflows/playwright.y
 ### Cleanup (same commit)
 Removed unused `TURBO_TOKEN`/`TURBO_TEAM` env block from `playwright.yml` — Turbo Remote Caching is not configured in `turbo.json`, so these vars were dead config and triggered IDE "context might be invalid" warnings. Added a comment explaining how to re-enable them if remote caching is turned on later.
 
+### Follow-up Fix (same root cause, additional files)
+Initial commit only patched `playwright.yml`. The same `version: 9` conflict and dead Turbo env block existed in **`ci.yml` (5 occurrences)** and **`deploy.yml` (2 occurrences)**. Applied the identical fix to both files:
+- Removed `version: 9` from every `pnpm/action-setup@v4` step
+- Removed unused `TURBO_TOKEN`/`TURBO_TEAM` env block from each file
+- Added the same explanatory comments
+
+Also removed unused `BASE_URL: ${{ vars.PRODUCTION_URL }}` env from the placeholder smoke-test step in `deploy.yml`. The step currently runs `echo "TODO - Add production smoke test suite"` and does not read `BASE_URL`. Added an inline comment noting the env var should be restored when the real smoke test command is implemented.
+
+Lesson: when fixing CI configuration, `grep` across the entire `.github/workflows/` directory before declaring done — config bugs commonly span sibling workflow files.
+

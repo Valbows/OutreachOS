@@ -8,9 +8,8 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
-env:
-  TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
-  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+# Note: Turbo Remote Caching is not currently enabled (no `remoteCache` block in turbo.json).
+# Add `TURBO_TOKEN`/`TURBO_TEAM` env vars here when remote caching is enabled.
 
 jobs:
   ci:
@@ -34,9 +33,8 @@ jobs:
       DATABASE_URL: postgresql://outreachos:outreachos_test@localhost:5432/outreachos_test
     steps:
       - uses: actions/checkout@v4
+      # Version comes from package.json `packageManager` field — do not pass `version` here
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -59,9 +57,8 @@ jobs:
     if: success()
     steps:
       - uses: actions/checkout@v4
+      # Version comes from package.json `packageManager` field — do not pass `version` here
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -70,7 +67,7 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - name: Wait for Vercel deployment
         run: sleep 60
+      # TODO: Implement production smoke test suite.
+      # When wiring up real smoke tests, restore: env: { BASE_URL: ${{ vars.PRODUCTION_URL }} }
       - name: Run smoke tests against production
         run: echo "TODO - Add production smoke test suite"
-        env:
-          BASE_URL: ${{ vars.PRODUCTION_URL }}
