@@ -139,7 +139,7 @@ export class BlogService {
 
   /** Get all published slugs for static generation */
   static async getAllSlugs(): Promise<string[]> {
-    // Cache-bust: 2026-04-26 - force rebuild after CI cache issue
+    // Cache-bust-v2: 2026-04-26 - force rebuild after CI cache issue
     try {
       const posts = await db
         .select({ slug: blogPosts.slug })
@@ -150,7 +150,13 @@ export class BlogService {
     } catch (error) {
       // Gracefully handle missing table during CI build (migrations not yet run)
       // or other database errors. Empty array = no static paths generated.
-      if (error instanceof Error && error.message.includes("relation \"blog_posts\" does not exist")) {
+      // Check both error code (42P01 = undefined_table) and message for robustness.
+      const errMsg = error instanceof Error ? error.message : String(error);
+      const errCode = (error as { code?: string }).code;
+      if (
+        errCode === "42P01" ||
+        errMsg.includes("relation \"blog_posts\" does not exist")
+      ) {
         return [];
       }
       // Re-throw other unexpected errors
