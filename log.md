@@ -1912,3 +1912,30 @@ cd /Users/valrene/CascadeProjects/outreachos/apps/web && pnpm dev
 5. Can now send emails via Gmail API instead of IMAP/SMTP
 
 ---
+
+## 2026-04-26 — Release: Dev → Main Merge
+
+**Branch:** `dev` → `main` (fast-forward, no conflicts)
+**Remote:** https://github.com/Valbows/OutreachOS
+
+### Commits Merged (4)
+1. `feat: PII hashing + retention policies` — HMAC-SHA-256 with `IP_HASH_PEPPER` (replaces brute-forceable plain SHA-256), pgcrypto guards in migrations 0002/0005, 90-day retention
+2. `feat: Google OAuth hardening` — env validation, origin checks, XSS escapes via `safeJsonForScript`, `verified_email` guard, conflict-resolution returning null in `getAuthAccount`, CRLF sanitization in Gmail headers
+3. `feat: schema FK constraints + webhook secret encryption` — 7 migrations (0000–0007), encrypted `imap_password_encrypted`/`smtp_password_encrypted`/`gmail_refresh_token_encrypted`/`secret_encrypted`, FK cascades on `replies.message_instance_id` and campaign-contact links
+4. `chore: tests + tooling + Phase 8 E2E suites` — 14 functional + 7 security Playwright specs, GitHub Actions workflow, route/test mock fixes
+
+### Test Results (Post-Merge)
+- `@outreachos/web`: 695 tests / 94 files passing
+- `@outreachos/services`: 247 tests / 20 files passing
+- `@outreachos/db`: 9 tests / 1 file passing
+- **Total: 951 tests / 115 files / 0 failures**
+
+### Plan Items Closed
+- Phase 7.7 — Penetration testing (Playwright security suite live)
+- Phase 7.8 — Full regression suite (951 passing post-merge)
+
+### Outstanding Manual Ops
+- Vercel project connect + production env vars (`IP_HASH_PEPPER`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `NEON_AUTH_*`, `NEXT_PUBLIC_APP_URL`)
+- Database `app.ip_pepper` setting must be set in Postgres before running migration 0002 in production: `SET app.ip_pepper = '<secret>';` — value MUST equal runtime `IP_HASH_PEPPER` env var
+
+---
