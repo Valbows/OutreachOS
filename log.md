@@ -2210,5 +2210,10 @@ This allows the build to complete with zero static blog pages when the table doe
 - `pnpm run lint`: clean
 - `pnpm run test:unit`: 695/695 passing
 
+### Follow-up Issue: CI Cache
+The fix was applied but CI still failed because `@outreachos/services:build` had a cache hit, replaying old logs without the fix. Added a cache-bust comment (`// Cache-bust: 2026-04-26`) to force rebuild.
+
 ### Architecture Decision
 Graceful degradation for static generation is preferred over hard build failures. The blog functionality is additive—if the table exists, static pages are generated; if not, the routes become dynamic. This aligns with the "progressive enhancement" philosophy and prevents build-time coupling to database migration order.
+
+**Secondary lesson:** When a fix in a dependency package doesn't propagate to CI, check turbo cache. Turborepo caches build outputs based on file hashes; a trivial comment change invalidates the cache.
