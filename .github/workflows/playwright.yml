@@ -10,9 +10,8 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
-  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+# Note: Turbo Remote Caching is not currently enabled (no `remoteCache` block in turbo.json).
+# Add `TURBO_TOKEN`/`TURBO_TEAM` env vars here when remote caching is enabled.
 
 jobs:
   functional-tests:
@@ -42,9 +41,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Version comes from package.json `packageManager` field — do not pass `version` here
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
 
       - uses: actions/setup-node@v4
         with:
@@ -108,9 +106,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Version comes from package.json `packageManager` field — do not pass `version` here
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
 
       - uses: actions/setup-node@v4
         with:

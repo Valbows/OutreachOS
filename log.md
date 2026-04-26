@@ -1939,3 +1939,28 @@ cd /Users/valrene/CascadeProjects/outreachos/apps/web && pnpm dev
 - Database `app.ip_pepper` setting must be set in Postgres before running migration 0002 in production: `SET app.ip_pepper = '<secret>';` — value MUST equal runtime `IP_HASH_PEPPER` env var
 
 ---
+
+## 2026-04-26 — Bug Fix: CI `ERR_PNPM_BAD_PM_VERSION`
+
+**Type:** Build/deployment (CI workflow config)
+**Impact:** Blocking — Playwright CI suite halted at the pnpm setup step
+
+### Symptom
+`pnpm/action-setup@v4` aborted with `ERR_PNPM_BAD_PM_VERSION`:
+> Multiple versions of pnpm specified:
+>   - version 9 in the GitHub Action config with the key "version"
+>   - version pnpm@9.0.0 in the package.json with the key "packageManager"
+
+### Root Cause
+`pnpm/action-setup@v4` rejects ambiguous version sources. Both `.github/workflows/playwright.yml` (lines 47 and 113: `version: 9`) and `package.json` (`"packageManager": "pnpm@9.0.0"`) declared a pnpm version; the action will not silently pick one.
+
+### Fix
+Removed the `version: 9` input from both jobs in `.github/workflows/playwright.yml`. `package.json` `packageManager` field is now the single source of truth, ensuring local dev (Corepack) and CI install the same exact version.
+
+### Verification
+- `grep -n "version:" .github/workflows/playwright.yml` returns only `node-version:` entries
+- No code or test changes required — config-only fix
+
+### Cleanup (same commit)
+Removed unused `TURBO_TOKEN`/`TURBO_TEAM` env block from `playwright.yml` — Turbo Remote Caching is not configured in `turbo.json`, so these vars were dead config and triggered IDE "context might be invalid" warnings. Added a comment explaining how to re-enable them if remote caching is turned on later.
+
