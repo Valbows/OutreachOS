@@ -3,18 +3,38 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const ORIGINAL_DATABASE_URL = process.env.DATABASE_URL;
 
-const poolConstructorMock = vi.fn();
+// Mocks for @neondatabase/serverless (Neon WebSocket driver)
+const neonPoolConstructorMock = vi.fn();
 const wsMock = { name: "ws-mock" };
 const neonConfigMock: { webSocketConstructor?: unknown } = {};
-class PoolMock {
+class NeonPoolMock {
   options: unknown;
 
   constructor(options: unknown) {
     this.options = options;
-    poolConstructorMock(options);
+    neonPoolConstructorMock(options);
   }
 }
-const drizzleMock = vi.fn(
+
+// Mocks for pg (node-postgres TCP driver)
+const pgPoolConstructorMock = vi.fn();
+class PgPoolMock {
+  options: unknown;
+
+  constructor(options: unknown) {
+    this.options = options;
+    pgPoolConstructorMock(options);
+  }
+}
+
+const drizzleNeonMock = vi.fn(
+  ({ client, schema }: { client: unknown; schema: unknown }) => ({
+    client,
+    schema,
+  }),
+);
+
+const drizzlePgMock = vi.fn(
   ({ client, schema }: { client: unknown; schema: unknown }) => ({
     client,
     schema,
@@ -22,12 +42,20 @@ const drizzleMock = vi.fn(
 );
 
 vi.mock("@neondatabase/serverless", () => ({
-  Pool: PoolMock,
+  Pool: NeonPoolMock,
   neonConfig: neonConfigMock,
 }));
 
 vi.mock("drizzle-orm/neon-serverless", () => ({
-  drizzle: drizzleMock,
+  drizzle: drizzleNeonMock,
+}));
+
+vi.mock("pg", () => ({
+  Pool: PgPoolMock,
+}));
+
+vi.mock("drizzle-orm/node-postgres", () => ({
+  drizzle: drizzlePgMock,
 }));
 
 vi.mock("ws", () => ({
@@ -63,14 +91,40 @@ describe("@outreachos/db", () => {
     }
   });
 
-  it("creates drizzle client with Pool and correct database URL", () => {
-    expect(poolConstructorMock).toHaveBeenCalledWith({
+  it("creates pg Pool for localhost URLs (TCP driver)", () => {
+    // localhost URL should use pg (node-postgres) driver
+    expect(pgPoolConstructorMock).toHaveBeenCalledWith({
       connectionString: "postgres://outreachos:test@localhost:5432/outreachos",
     });
-    expect(drizzleMock).toHaveBeenCalledTimes(1);
-    expect(neonConfigMock.webSocketConstructor).toBe(wsMock);
-    expect(database.client).toBeInstanceOf(PoolMock);
+    expect(drizzlePgMock).toHaveBeenCalledTimes(1);
+    expect(neonPoolConstructorMock).not.toHaveBeenCalled();
+    expect(database.client).toBeInstanceOf(PgPoolMock);
     expect(database.schema.accounts).toBe(dbModule.accounts);
+  });
+
+  it("creates Neon Pool for non-localhost URLs (WebSocket driver)", async () => {
+    vi.clearAllMocks();
+    vi.resetModules();
+
+    // Use a Neon hostname (not localhost/private IP)
+    process.env.DATABASE_URL =
+      "postgres://outreachos:test@ep-xyz.us-east-1.aws.neon.tech:5432/outreachos";
+
+    const neonDbModule = await import("./index");
+    const neonDatabase = neonDbModule.db as unknown as {
+      client: unknown;
+      schema: Record<string, unknown>;
+    };
+    // Trigger lazy db initialization
+    void neonDatabase.client;
+
+    expect(neonPoolConstructorMock).toHaveBeenCalledWith({
+      connectionString: "postgres://outreachos:test@ep-xyz.us-east-1.aws.neon.tech:5432/outreachos",
+    });
+    expect(drizzleNeonMock).toHaveBeenCalledTimes(1);
+    expect(pgPoolConstructorMock).not.toHaveBeenCalled();
+    expect(neonConfigMock.webSocketConstructor).toBe(wsMock);
+    expect(neonDatabase.client).toBeInstanceOf(NeonPoolMock);
   });
 
   it("exports all schema tables with correct table names", () => {

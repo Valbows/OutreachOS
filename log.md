@@ -2138,3 +2138,41 @@ Added `pg` and `@types/pg` dependencies to `packages/db/package.json`.
 
 ### Architecture Decision
 This dual-driver approach is temporary. Once the migration to full Neon hosting is complete, the TCP path can be removed. For now, it ensures CI builds work with local Postgres while production uses Neon serverless.
+
+---
+
+## 2026-04-26 — Bug Fix: Update unit tests for dual-driver DB connection
+
+**Type:** Build/deployment (test compatibility)
+**Impact:** Blocking — `test:unit` in CI fails after dual-driver change
+
+### Failure
+```
+FAIL src/index.test.ts > @outreachos/db > creates drizzle client with Pool and correct database URL
+AssertionError: expected "spy" to be called with arguments: [ Array(1) ]
+Number of calls: 0
+```
+
+### Root Cause
+The `packages/db/src/index.test.ts` unit test was mocking only `@neondatabase/serverless` Pool. After implementing the dual-driver approach in `drizzle.ts` (which uses `pg` Pool for localhost URLs), the test was still asserting that `NeonPool` was called, causing a false failure.
+
+### Fix
+Updated `packages/db/src/index.test.ts`:
+- Added mocks for `pg` (node-postgres) driver alongside existing Neon mocks
+- Renamed `poolConstructorMock` → `neonPoolConstructorMock` and `PoolMock` → `NeonPoolMock`
+- Added `pgPoolConstructorMock` and `PgPoolMock` for TCP driver
+- Added separate mocks for `drizzleNeonMock` and `drizzlePgMock`
+- Split the single test into two focused tests:
+  1. "creates pg Pool for localhost URLs (TCP driver)" - verifies pg is used for localhost
+  2. "creates Neon Pool for non-localhost URLs (WebSocket driver)" - verifies Neon is used for cloud URLs
+
+### Verification
+- `pnpm --filter @outreachos/db exec vitest run`: 10/10 passing
+- `pnpm run test:unit`: 6 successful tasks, 695/695 tests passing
+- `pnpm run build`: success
+- `pnpm run lint`: clean
+
+### Lesson
+- When introducing conditional driver selection, unit tests must verify both branches
+- Mocks should align with the actual code's dependency usage
+- Test failures in CI may indicate test fragility, not actual code bugs
