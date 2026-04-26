@@ -1,6 +1,8 @@
 import { pgTable, uuid, text, timestamp, integer, jsonb, real } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { accounts } from "./accounts.js";
+import { contacts, contactGroups } from "./contacts.js";
+import { campaigns } from "./campaigns.js";
 
 /** Outcome type for LinkedIn response classification */
 export type ResponseOutcome = "positive" | "negative" | "neutral";
@@ -8,8 +10,8 @@ export type ResponseOutcome = "positive" | "negative" | "neutral";
 export const linkedinPlaybooks = pgTable("linkedin_playbooks", {
   id: uuid("id").defaultRandom().primaryKey(),
   accountId: uuid("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),
-  contactId: uuid("contact_id"),
-  groupId: uuid("group_id"),
+  contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "set null" }),
+  groupId: uuid("group_id").references(() => contactGroups.id, { onDelete: "set null" }),
   prompt: text("prompt"),
   generatedCopy: text("generated_copy"),
   status: text("status").default("draft").notNull(),
@@ -43,7 +45,8 @@ export const hunterUsageLog = pgTable("hunter_usage_log", {
   accountId: uuid("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),
   apiKeyId: uuid("api_key_id").references(() => apiKeys.id, { onDelete: "set null" }),
   domain: text("domain"),
-  email: text("email"),
+  /** SHA-256 hex of the looked-up email — never stores the raw address */
+  emailHash: text("email_hash"),
   endpoint: text("endpoint").notNull(), // e.g., "domain_search", "email_finder", "email_verifier"
   requestsUsed: integer("requests_used").default(1).notNull(),
   resultFound: integer("result_found").default(0), // 1 if email found, 0 otherwise
@@ -56,8 +59,8 @@ export const resendUsageLog = pgTable("resend_usage_log", {
   id: uuid("id").defaultRandom().primaryKey(),
   accountId: uuid("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),
   apiKeyId: uuid("api_key_id").references(() => apiKeys.id, { onDelete: "set null" }),
-  campaignId: uuid("campaign_id"),
-  contactId: uuid("contact_id"),
+  campaignId: uuid("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
+  contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "set null" }),
   messageId: text("message_id"), // Resend message ID
   status: text("status").notNull(), // "sent", "delivered", "bounced", "complained"
   emailCount: integer("email_count").default(1).notNull(), // batch size
@@ -138,7 +141,8 @@ export const webhooks = pgTable("webhooks", {
   id: uuid("id").defaultRandom().primaryKey(),
   accountId: uuid("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),
   url: text("url").notNull(),
-  secret: text("secret").notNull(),
+  /** AES-256-GCM ciphertext (CryptoService) — never store plaintext */
+  secretEncrypted: text("secret_encrypted").notNull(),
   events: jsonb("events").$type<string[]>().notNull(),
   enabled: integer("enabled").default(1).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),

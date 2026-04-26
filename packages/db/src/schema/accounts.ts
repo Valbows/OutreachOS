@@ -16,20 +16,25 @@ export const PLAN_RATE_LIMITS: Record<PlanTier, RateLimitConfig> = {
 
 export const accounts = pgTable("accounts", {
   id: uuid("id").defaultRandom().primaryKey(),
+  // Stable Neon Auth user ID - used for account lookup regardless of email changes
+  neonAuthId: text("neon_auth_id").unique(),
   name: text("name").notNull(),
   email: text("email").notNull().unique(),
   senderDomain: text("sender_domain"),
   imapHost: text("imap_host"),
   imapPort: integer("imap_port"),
   imapUser: text("imap_user"),
-  imapPassword: text("imap_password"),
+  /** AES-256-GCM ciphertext (CryptoService) — never store plaintext */
+  imapPasswordEncrypted: text("imap_password_encrypted"),
   smtpHost: text("smtp_host"),
   smtpPort: integer("smtp_port"),
   smtpUser: text("smtp_user"),
-  smtpPassword: text("smtp_password"),
+  /** AES-256-GCM ciphertext (CryptoService) — never store plaintext */
+  smtpPasswordEncrypted: text("smtp_password_encrypted"),
   // Gmail OAuth
   gmailAddress: text("gmail_address"),
-  gmailRefreshToken: text("gmail_refresh_token"),
+  /** AES-256-GCM ciphertext (CryptoService) — never store plaintext */
+  gmailRefreshTokenEncrypted: text("gmail_refresh_token_encrypted"),
   llmProvider: text("llm_provider").default("gemini"),
   llmModel: text("llm_model"),
   byokKeys: jsonb("byok_keys").$type<Record<string, string>>(),

@@ -5,6 +5,7 @@
 import { db, webhooks, webhookDeliveries } from "@outreachos/db";
 import { eq, and, lte, isNull } from "drizzle-orm";
 import { createHmac, randomBytes, timingSafeEqual } from "crypto";
+import { CryptoService } from "./crypto-service.js";
 
 export type WebhookEvent =
   | "email.sent"
@@ -39,18 +40,21 @@ export class WebhookService {
    */
   static async create(input: CreateWebhookInput) {
     const secret = `whsec_${randomBytes(24).toString("hex")}`;
-    
+    const secretEncrypted = CryptoService.encrypt(secret);
+
     const [webhook] = await db
       .insert(webhooks)
       .values({
         accountId: input.accountId,
         url: input.url,
-        secret,
+        secretEncrypted,
         events: input.events,
         enabled: 1,
       })
       .returning();
 
+    // Return plaintext secret once so caller can show it to the user;
+    // it is never stored in plaintext after this point.
     return { ...webhook, secret };
   }
 
@@ -187,7 +191,8 @@ export class WebhookService {
     webhook: typeof webhooks.$inferSelect
   ) {
     const payload = JSON.stringify(delivery.payload);
-    const signature = WebhookService.sign(payload, webhook.secret);
+    const secret = CryptoService.decrypt(webhook.secretEncrypted);
+    const signature = WebhookService.sign(payload, secret);
 
     try {
       const response = await fetch(webhook.url, {

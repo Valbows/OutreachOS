@@ -2,6 +2,7 @@ import { pgTable, uuid, text, timestamp, integer, jsonb, boolean, unique } from 
 import { eq, and, sql, desc, count, lte, isNull, inArray, asc } from "drizzle-orm";
 import { relations } from "drizzle-orm";
 import { accounts } from "./accounts.js";
+import { contacts, contactGroups } from "./contacts.js";
 
 export const templates = pgTable("templates", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -26,7 +27,7 @@ export const campaigns = pgTable("campaigns", {
   name: text("name").notNull(),
   type: text("type").notNull(), // one_time, journey, funnel, ab_test, newsletter
   status: text("status").default("draft").notNull(), // draft, active, paused, completed, stopped
-  groupId: uuid("group_id"),
+  groupId: uuid("group_id").references(() => contactGroups.id, { onDelete: "set null" }),
   templateId: uuid("template_id").references(() => templates.id),
   scheduledAt: timestamp("scheduled_at", { withTimezone: true }),
   startedAt: timestamp("started_at", { withTimezone: true }),
@@ -60,7 +61,7 @@ export const campaignSteps = pgTable("campaign_steps", {
 export const messageInstances = pgTable("message_instances", {
   id: uuid("id").defaultRandom().primaryKey(),
   campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
-  contactId: uuid("contact_id").notNull(),
+  contactId: uuid("contact_id").notNull().references(() => contacts.id, { onDelete: "cascade" }),
   stepId: uuid("step_id"),
   templateId: uuid("template_id"),
   experimentBatchId: uuid("experiment_batch_id"),
@@ -87,8 +88,8 @@ export const emailEvents = pgTable("email_events", {
 
 export const replies = pgTable("replies", {
   id: uuid("id").defaultRandom().primaryKey(),
-  messageInstanceId: uuid("message_instance_id").references(() => messageInstances.id),
-  contactId: uuid("contact_id").notNull(),
+  messageInstanceId: uuid("message_instance_id").references(() => messageInstances.id, { onDelete: "cascade" }),
+  contactId: uuid("contact_id").notNull().references(() => contacts.id, { onDelete: "cascade" }),
   campaignId: uuid("campaign_id").references(() => campaigns.id),
   subject: text("subject"),
   bodyPreview: text("body_preview"),
@@ -102,7 +103,7 @@ export const journeyEnrollments = pgTable(
   {
     id: uuid("id").defaultRandom().primaryKey(),
     campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
-    contactId: uuid("contact_id").notNull(),
+    contactId: uuid("contact_id").notNull().references(() => contacts.id, { onDelete: "cascade" }),
     currentStepId: uuid("current_step_id").references(() => campaignSteps.id),
     status: text("status").default("enrolled").notNull(),
     // enrolled, initial_sent, first_followup_sent, second_followup_sent, hail_mary_sent, completed, removed
