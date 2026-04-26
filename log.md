@@ -2220,6 +2220,35 @@ Graceful degradation for static generation is preferred over hard build failures
 
 ---
 
+## 2026-04-26 — Bug Fix: Enhanced error handling for missing blog_posts table
+
+**Type:** Build/deployment (robustness improvement)
+**Impact:** Blocking — CI build still failing despite try-catch fix
+
+### Follow-up Failure
+Same error as before: `relation "blog_posts" does not exist` during `generateStaticParams`
+
+### Root Cause Analysis
+The previous fix (try-catch with `instanceof Error` check) was in source but CI Turborepo cache was still using the old services build. Additionally, the error check was too strict — it relied on `error instanceof Error` which may not work consistently across different error types from the pg driver.
+
+### Enhanced Fix
+Updated `packages/services/src/blog-service.ts` `getAllSlugs()`:
+- Changed `// Cache-bust: 2026-04-26` to `// Cache-bust-v2: 2026-04-26` to force file hash change
+- Added error code check: `errCode === "42P01"` (Postgres undefined_table error code)
+- Made message check more robust: `errMsg = error instanceof Error ? error.message : String(error)`
+- Combined both checks with OR logic for maximum compatibility
+
+### Verification
+- Local build: success
+- Commit pushed to both branches: `cfc02c5`
+
+### Lesson
+- Use Postgres error codes (42P01 = undefined_table) for more reliable detection than message strings
+- Different database drivers may throw errors with different structures; defensive programming handles multiple cases
+- CI caching can mask source code changes; verify cache invalidation with file hash changes
+
+---
+
 ## 2026-04-26 — Bug Fix: Playwright not found in CI workflow
 
 **Type:** Build/deployment (CI workflow)
