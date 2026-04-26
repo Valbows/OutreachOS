@@ -96,7 +96,7 @@ function markdownToHtml(md: string): string {
   const inline = (text: string) => {
     // Step 1: Process markdown links FIRST on raw text (before HTML escaping)
     // This prevents URL corruption (e.g., & becoming &amp;)
-    let processed = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, linkText, url) => {
+    const processed = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, linkText, url) => {
       // Validate URL scheme on the original unescaped URL
       if (isSafeUrl(url)) {
         // Escape link text for HTML, encode URL for href attribute
@@ -109,7 +109,7 @@ function markdownToHtml(md: string): string {
     });
 
     // Step 2: HTML-escape the remaining text to prevent XSS
-    let escaped = escapeHtml(processed);
+    const escaped = escapeHtml(processed);
 
     // Step 3: Perform other formatting replacements on the escaped string
     // Note: Skip replacing content inside <a> tags (they're already processed)

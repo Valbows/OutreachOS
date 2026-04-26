@@ -28,6 +28,7 @@ export default function AuthCallbackPage() {
     if (isLinking && window.opener) {
       // Get session to extract the linked Google account email
       authClient.getSession()
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Better-Auth session shape
         .then((session: any) => {
           const email = session?.data?.user?.email || session?.data?.email;
           console.log("[Callback] Session email:", email);
@@ -38,6 +39,7 @@ export default function AuthCallbackPage() {
           );
           setTimeout(() => window.close(), 500);
         })
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Better-Auth error shape
         .catch((err: any) => {
           console.error("[Callback] Failed to get session:", err);
           setStatus("Authentication completed but could not get email.");

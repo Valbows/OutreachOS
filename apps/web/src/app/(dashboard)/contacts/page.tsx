@@ -31,6 +31,19 @@ import {
 type SortField = "name" | "company" | "email" | "score" | "createdAt";
 type SortDir = "asc" | "desc";
 
+function SortIndicator({
+  field,
+  currentField,
+  dir,
+}: {
+  field: SortField;
+  currentField: SortField;
+  dir: SortDir;
+}) {
+  if (currentField !== field) return null;
+  return <span className="ml-1">{dir === "asc" ? "↑" : "↓"}</span>;
+}
+
 export default function ContactsPage() {
   const router = useRouter();
   const [selectedGroup, setSelectedGroup] = useState<string>("all");
@@ -264,11 +277,6 @@ export default function ContactsPage() {
     });
   }, [groupToDelete, deleteGroup]);
 
-  function SortIndicator({ field }: { field: SortField }) {
-    if (sortField !== field) return null;
-    return <span className="ml-1">{sortDir === "asc" ? "↑" : "↓"}</span>;
-  }
-
   return (
     <div className="flex gap-6 h-[calc(100vh-120px)]">
       {/* Sidebar — Groups */}
@@ -482,22 +490,22 @@ export default function ContactsPage() {
                     </TableHead>
                     <TableHead>
                       <button type="button" onClick={() => toggleSort("name")} className="cursor-pointer hover:text-on-surface transition-colors">
-                        Name <SortIndicator field="name" />
+                        Name <SortIndicator field="name" currentField={sortField} dir={sortDir} />
                       </button>
                     </TableHead>
                     <TableHead>
                       <button type="button" onClick={() => toggleSort("email")} className="cursor-pointer hover:text-on-surface transition-colors">
-                        Email <SortIndicator field="email" />
+                        Email <SortIndicator field="email" currentField={sortField} dir={sortDir} />
                       </button>
                     </TableHead>
                     <TableHead>
                       <button type="button" onClick={() => toggleSort("company")} className="cursor-pointer hover:text-on-surface transition-colors">
-                        Company <SortIndicator field="company" />
+                        Company <SortIndicator field="company" currentField={sortField} dir={sortDir} />
                       </button>
                     </TableHead>
                     <TableHead>
                       <button type="button" onClick={() => toggleSort("score")} className="cursor-pointer hover:text-on-surface transition-colors">
-                        Score <SortIndicator field="score" />
+                        Score <SortIndicator field="score" currentField={sortField} dir={sortDir} />
                       </button>
                     </TableHead>
                     <TableHead>Status</TableHead>

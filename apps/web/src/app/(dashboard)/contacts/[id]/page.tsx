@@ -31,6 +31,73 @@ export default function ContactDetailPage() {
   const updateField = useUpdateCustomField();
   const deleteField = useDeleteCustomField();
 
+  // All hooks must be called before any early return. When contactId is missing
+  // we pass an empty string; the hooks treat that as a disabled query.
+  const safeContactId = contactId ?? "";
+  const { data: contact, isLoading: loading } = useContact(safeContactId);
+  const { data: analytics } = useContactAnalytics(safeContactId);
+  
+  // Use real analytics data or fallback to empty
+  const stats = {
+    emailsSent: analytics?.emailsSent ?? 0,
+    totalOpens: analytics?.totalOpens ?? 0,
+    replies: analytics?.replies ?? 0,
+    unsubscribes: analytics?.unsubscribes ?? 0,
+    softBounces: analytics?.softBounces ?? 0,
+    hardBounces: analytics?.hardBounces ?? 0,
+  };
+  const hourlyOpens = analytics?.hourlyOpens ?? Array.from({ length: 24 }, (_, i) => ({ hour: i, count: 0 }));
+  const dailyOpens = analytics?.dailyOpens ?? ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => ({ day: d, count: 0 }));
+
+  // Handlers for custom fields
+  const handleStartEdit = useCallback((key: string, value: unknown) => {
+    setEditingField(key);
+    setEditFieldValue(String(value));
+    setFieldError(null);
+  }, []);
+
+  const handleSaveField = useCallback((key: string) => {
+    updateField.mutate(
+      { contactId: safeContactId, fieldName: key, fieldValue: editFieldValue },
+      {
+        onSuccess: () => {
+          setEditingField(null);
+          setFieldError(null);
+        },
+        onError: (err) => setFieldError(err.message),
+      }
+    );
+  }, [safeContactId, editFieldValue, updateField]);
+
+  const handleDeleteField = useCallback((key: string) => {
+    deleteField.mutate(
+      { contactId: safeContactId, fieldName: key },
+      {
+        onError: (err) => setFieldError(err.message),
+      }
+    );
+  }, [safeContactId, deleteField]);
+
+  const handleAddField = useCallback(() => {
+    if (!newFieldName.trim()) return;
+    updateField.mutate(
+      { contactId: safeContactId, fieldName: newFieldName.trim(), fieldValue: newFieldValue },
+      {
+        onSuccess: () => {
+          setShowAddFieldModal(false);
+          setNewFieldName("");
+          setNewFieldValue("");
+          setFieldError(null);
+        },
+        onError: (err) => setFieldError(err.message),
+      }
+    );
+  }, [safeContactId, newFieldName, newFieldValue, updateField]);
+
+  const handleReEnrich = useCallback(() => {
+    reEnrich.mutate(safeContactId);
+  }, [safeContactId, reEnrich]);
+
   if (!contactId) {
     return (
       <div className="max-w-4xl mx-auto">
@@ -63,70 +130,6 @@ export default function ContactDetailPage() {
       </div>
     );
   }
-
-  const { data: contact, isLoading: loading } = useContact(contactId);
-  const { data: analytics } = useContactAnalytics(contactId);
-  
-  // Use real analytics data or fallback to empty
-  const stats = {
-    emailsSent: analytics?.emailsSent ?? 0,
-    totalOpens: analytics?.totalOpens ?? 0,
-    replies: analytics?.replies ?? 0,
-    unsubscribes: analytics?.unsubscribes ?? 0,
-    softBounces: analytics?.softBounces ?? 0,
-    hardBounces: analytics?.hardBounces ?? 0,
-  };
-  const hourlyOpens = analytics?.hourlyOpens ?? Array.from({ length: 24 }, (_, i) => ({ hour: i, count: 0 }));
-  const dailyOpens = analytics?.dailyOpens ?? ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => ({ day: d, count: 0 }));
-
-  // Handlers for custom fields
-  const handleStartEdit = useCallback((key: string, value: unknown) => {
-    setEditingField(key);
-    setEditFieldValue(String(value));
-    setFieldError(null);
-  }, []);
-
-  const handleSaveField = useCallback((key: string) => {
-    updateField.mutate(
-      { contactId, fieldName: key, fieldValue: editFieldValue },
-      {
-        onSuccess: () => {
-          setEditingField(null);
-          setFieldError(null);
-        },
-        onError: (err) => setFieldError(err.message),
-      }
-    );
-  }, [contactId, editFieldValue, updateField]);
-
-  const handleDeleteField = useCallback((key: string) => {
-    deleteField.mutate(
-      { contactId, fieldName: key },
-      {
-        onError: (err) => setFieldError(err.message),
-      }
-    );
-  }, [contactId, deleteField]);
-
-  const handleAddField = useCallback(() => {
-    if (!newFieldName.trim()) return;
-    updateField.mutate(
-      { contactId, fieldName: newFieldName.trim(), fieldValue: newFieldValue },
-      {
-        onSuccess: () => {
-          setShowAddFieldModal(false);
-          setNewFieldName("");
-          setNewFieldValue("");
-          setFieldError(null);
-        },
-        onError: (err) => setFieldError(err.message),
-      }
-    );
-  }, [contactId, newFieldName, newFieldValue, updateField]);
-
-  const handleReEnrich = useCallback(() => {
-    reEnrich.mutate(contactId);
-  }, [contactId, reEnrich]);
 
   if (loading) {
     return (

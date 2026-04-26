@@ -8,10 +8,13 @@ function handler() {
   return _handler;
 }
 
+// Catch-all auth handler — ctx shape is internal to Better-Auth, not user-facing.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function GET(req: NextRequest, ctx: any) {
   return handler().GET(req, ctx);
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function POST(req: NextRequest, ctx: any) {
   return handler().POST(req, ctx);
 }

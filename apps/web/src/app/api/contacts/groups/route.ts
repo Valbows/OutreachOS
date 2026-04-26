@@ -27,6 +27,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- legacy untyped JSON parse; TODO migrate to Zod
     let body: any;
     try {
       body = await request.json();

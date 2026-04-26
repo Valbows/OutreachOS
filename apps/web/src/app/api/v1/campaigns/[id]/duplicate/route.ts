@@ -47,6 +47,7 @@ async function handlePost(
   const duplicate = await CampaignService.create({
     accountId: ctx.accountId,
     name: newName,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- DB returns string; CampaignService type is a narrower union
     type: original.type as any,
     groupId: original.groupId ?? undefined,
     templateId: original.templateId ?? undefined,

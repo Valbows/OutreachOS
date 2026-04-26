@@ -21,6 +21,7 @@ export async function POST(
       return NextResponse.json({ error: "Group not found" }, { status: 404 });
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- legacy untyped JSON parse; TODO migrate to Zod
     let body: any;
     try {
       body = await request.json();
