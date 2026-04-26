@@ -404,7 +404,7 @@ describe("FormService", () => {
           email: "  JANE@EXAMPLE.COM  ",
           company: "Acme Inc",
         },
-        ipAddress: "192.168.1.1",
+        hashedIp: "aabbccdd",
         userAgent: "Mozilla/5.0",
       };
       const formQuery = makeChain({ limitResult: [{ id: "form-1" }] });
@@ -439,8 +439,9 @@ describe("FormService", () => {
       expect(submissionInsert.values).toHaveBeenCalledWith({
         formId: "form-1",
         data: input.data,
-        ipAddress: "192.168.1.1",
+        hashedIp: "aabbccdd",
         userAgent: "Mozilla/5.0",
+        retentionExpiresAt: expect.any(Date),
       });
       expect(incrementUpdate.set).toHaveBeenCalledWith({
         submissionCount: expect.any(Object),

@@ -17,7 +17,7 @@ describe("Form → Contact → Funnel → Email Integration", () => {
           email: "john@example.com",
           company: "Acme Inc",
         },
-        ipAddress: "192.168.1.1",
+        hashedIp: "b6d767d2f8ed5d21a44b0e5886680cb9b2b0a3a3a2a3a4a5a6a7a8a9a0a1a2a3",
         userAgent: "Mozilla/5.0",
       };
       expect(formSubmission.data.email).toBe("john@example.com");

@@ -10,6 +10,7 @@ import {
   contacts,
   accounts,
 } from "@outreachos/db";
+import { createHmac } from "crypto";
 import { eq, and, desc, count, sql } from "drizzle-orm";
 
 export type FormType = "minimal" | "modal" | "inline_banner" | "multi_step" | "side_drawer";
@@ -60,8 +61,30 @@ export interface UpdateFormInput {
 export interface SubmitFormInput {
   formId: string;
   data: Record<string, unknown>;
-  ipAddress?: string;
+  /** Pre-hashed (HMAC-SHA-256 hex, keyed on IP_HASH_PEPPER) IP address — raw IP must not be passed here */
+  hashedIp?: string;
+  /** Raw user-agent string; truncated to 256 chars before storage */
   userAgent?: string;
+}
+
+/** Retention period for submission PII: 90 days */
+const SUBMISSION_RETENTION_DAYS = 90;
+
+/**
+ * Hash a raw IP address with HMAC-SHA-256, keyed on the IP_HASH_PEPPER env var.
+ *
+ * A plain SHA-256 of an IPv4 address is trivially brute-forceable (entire v4
+ * space is ~4B). HMAC with a server-side pepper makes the hash non-reversible
+ * without the key. The pepper MUST match the value used when running migration
+ * 0002_form_submissions_pii_reduction.sql (SET app.ip_pepper = '...') so
+ * historical and runtime hashes collate on the same value.
+ */
+export function hashIpAddress(ip: string): string {
+  const pepper = process.env.IP_HASH_PEPPER;
+  if (!pepper) {
+    throw new Error("IP_HASH_PEPPER env var is not set; cannot hash IP address");
+  }
+  return createHmac("sha256", pepper).update(ip).digest("hex");
 }
 
 // Pre-built form templates
@@ -270,14 +293,18 @@ export class FormService {
         throw new Error(`Form not found: ${input.formId}`);
       }
 
-      // Record submission
+      // Record submission — store hashed IP and truncated UA only
+      const retentionExpiresAt = new Date();
+      retentionExpiresAt.setDate(retentionExpiresAt.getDate() + SUBMISSION_RETENTION_DAYS);
+
       const [submission] = await tx
         .insert(formSubmissions)
         .values({
           formId: input.formId,
           data: input.data,
-          ipAddress: input.ipAddress ?? null,
-          userAgent: input.userAgent ?? null,
+          hashedIp: input.hashedIp ?? null,
+          userAgent: input.userAgent ? input.userAgent.slice(0, 256) : null,
+          retentionExpiresAt,
         })
         .returning();
 
