@@ -13,9 +13,11 @@ const createTestQueryClient = () => new QueryClient({
 
 const renderWithQueryClient = (ui: React.ReactElement) => {
   const testQueryClient = createTestQueryClient();
-  return render(
-    <QueryClientProvider client={testQueryClient}>{ui}</QueryClientProvider>
+  const Wrapper = ({ children }: { children: React.ReactNode }) => (
+    <QueryClientProvider client={testQueryClient}>{children}</QueryClientProvider>
   );
+  const result = render(ui, { wrapper: Wrapper });
+  return result;
 };
 
 const mockPush = vi.fn();
@@ -272,7 +274,7 @@ describe("JourneyBuilderPage", () => {
       error: null,
     });
 
-    render(<JourneyBuilderPage />);
+    renderWithQueryClient(<JourneyBuilderPage />);
     await user.click(screen.getByRole("button", { name: /reschedule/i }));
 
     expect(screen.getByRole("dialog")).toBeInTheDocument();

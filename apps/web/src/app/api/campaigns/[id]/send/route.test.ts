@@ -11,6 +11,20 @@ vi.mock("@outreachos/services", () => ({
   },
 }));
 
+const { dbSelectMock } = vi.hoisted(() => {
+  const limitMock = vi.fn().mockResolvedValue([{ gmailAddress: null }]);
+  const whereMock = vi.fn(() => ({ limit: limitMock }));
+  const fromMock = vi.fn(() => ({ where: whereMock }));
+  const selectMock = vi.fn(() => ({ from: fromMock }));
+  return { dbSelectMock: selectMock };
+});
+
+vi.mock("@outreachos/db", () => ({
+  db: { select: dbSelectMock },
+  accounts: { id: "id", gmailAddress: "gmail_address" },
+  eq: vi.fn(),
+}));
+
 import { getAuthAccount } from "@/lib/auth/session";
 import { CampaignService } from "@outreachos/services";
 import { POST } from "./route";
@@ -87,6 +101,7 @@ describe("POST /api/campaigns/[id]/send", () => {
       expect.objectContaining({
         resendApiKey: "resend_test_key",
         fromEmail: "sender@example.com",
+        fromName: "Test User",
         replyTo: "reply@example.com",
       }),
       expect.any(Function),

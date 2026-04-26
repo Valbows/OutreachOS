@@ -118,13 +118,29 @@ export default function CampaignsPage() {
                       {new Date(c.createdAt).toLocaleDateString()}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <button
-                        onClick={() => handleDelete(c.id)}
-                        disabled={deletingId === c.id}
-                        className="text-error text-xs hover:underline disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {deletingId === c.id ? "Deleting..." : "Delete"}
-                      </button>
+                      <div className="flex items-center justify-end gap-3">
+                        {c.status === "draft" && (
+                          <Link
+                            href={`/campaigns/${c.id}`}
+                            className="text-primary text-xs hover:underline font-medium"
+                          >
+                            Send
+                          </Link>
+                        )}
+                        <Link
+                          href={`/campaigns/${c.id}/analytics`}
+                          className="text-on-surface-variant text-xs hover:text-primary transition-colors"
+                        >
+                          Analytics
+                        </Link>
+                        <button
+                          onClick={() => handleDelete(c.id)}
+                          disabled={deletingId === c.id}
+                          className="text-error text-xs hover:underline disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {deletingId === c.id ? "Deleting..." : "Delete"}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );

@@ -42,6 +42,10 @@
       "dependsOn": ["build"],
       "inputs": ["$TURBO_DEFAULT$", ".env*"]
     },
+    "test:security": {
+      "dependsOn": ["build"],
+      "inputs": ["$TURBO_DEFAULT$", ".env*"]
+    },
     "db:generate": {
       "cache": false
     },

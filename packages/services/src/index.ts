@@ -12,7 +12,7 @@ export { AnalyticsService } from "./analytics-service.js";
 export type { CampaignMetrics, HourlyMetric, DailyMetric } from "./analytics-service.js";
 export { InboxService } from "./inbox-service.js";
 export type { ImapConfig, SmtpConfig, ParsedEmail, PollResult } from "./inbox-service.js";
-export { FormService } from "./form-service.js";
+export { FormService, hashIpAddress } from "./form-service.js";
 export type { FormType, FormField, CreateFormInput, UpdateFormInput, SubmitFormInput } from "./form-service.js";
 export { JourneyService } from "./journey-service.js";
 export type { JourneyState, CreateJourneyInput, JourneyProgress } from "./journey-service.js";

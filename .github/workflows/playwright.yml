@@ -1,0 +1,148 @@
+name: Playwright Tests
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+
+jobs:
+  functional-tests:
+    name: Functional E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: outreachos
+          POSTGRES_PASSWORD: outreachos_test
+          POSTGRES_DB: outreachos_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://outreachos:outreachos_test@localhost:5432/outreachos_test
+      NEON_AUTH_COOKIE_SECRET: test_secret_for_ci_only_32_chars_abc
+      PLAYWRIGHT_BASE_URL: http://localhost:3000
+      TEST_USER_EMAIL: test@example.com
+      TEST_USER_PASSWORD: testpassword123
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Build application
+        run: pnpm run build
+
+      - name: Run functional E2E tests
+        run: pnpm run test:e2e
+        env:
+          CI: true
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-functional
+          path: apps/web/playwright-report/
+          retention-days: 14
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-functional
+          path: apps/web/test-results/
+          retention-days: 14
+
+  security-tests:
+    name: Security Tests (OWASP Top 10)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: outreachos
+          POSTGRES_PASSWORD: outreachos_test
+          POSTGRES_DB: outreachos_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://outreachos:outreachos_test@localhost:5432/outreachos_test
+      NEON_AUTH_COOKIE_SECRET: test_secret_for_ci_only_32_chars_abc
+      PLAYWRIGHT_BASE_URL: http://localhost:3000
+      TEST_USER_EMAIL: test@example.com
+      TEST_USER_PASSWORD: testpassword123
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Build application
+        run: pnpm run build
+
+      - name: Run security tests
+        run: pnpm run test:security
+        env:
+          CI: true
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-security
+          path: apps/web/playwright-report/
+          retention-days: 30
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-security
+          path: apps/web/test-results/
+          retention-days: 30

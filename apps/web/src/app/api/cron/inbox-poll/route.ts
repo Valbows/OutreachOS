@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { InboxService } from "@outreachos/services";
+import { InboxService, CryptoService } from "@outreachos/services";
 import { db, accounts } from "@outreachos/db";
 import { isNotNull, and } from "drizzle-orm";
 
@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Find all accounts with IMAP configured
+    // Find all accounts with IMAP configured (encrypted password column)
     const configuredAccounts = await db
       .select()
       .from(accounts)
@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
         and(
           isNotNull(accounts.imapHost),
           isNotNull(accounts.imapUser),
-          isNotNull(accounts.imapPassword),
+          isNotNull(accounts.imapPasswordEncrypted),
         ),
       );
 
@@ -40,6 +40,16 @@ export async function GET(request: NextRequest) {
 
     for (const account of configuredAccounts) {
       try {
+        // Decrypt the IMAP password just-in-time — plaintext never leaves this scope
+        let imapPassword: string;
+        try {
+          imapPassword = CryptoService.decrypt(account.imapPasswordEncrypted!);
+        } catch (decryptErr) {
+          console.error(`IMAP password decrypt failed for account ${account.id}:`, decryptErr);
+          results.push({ accountId: account.id, error: "decrypt_failed" });
+          continue;
+        }
+
         const settings = (account.settings ?? {}) as Record<string, unknown>;
         const isGmail = String(account.imapHost ?? "").includes("gmail");
         const result = await InboxService.pollAndProcess(
@@ -48,7 +58,7 @@ export async function GET(request: NextRequest) {
             host: account.imapHost!,
             port: account.imapPort ?? 993,
             user: account.imapUser!,
-            password: account.imapPassword!,
+            password: imapPassword,
             tls: true,
           },
           {

@@ -3,6 +3,7 @@
  * Tracks per-key usage for LLM, Hunter.io, and Resend APIs
  */
 
+import { createHash } from "crypto";
 import { db, llmUsageLog, hunterUsageLog, resendUsageLog } from "@outreachos/db";
 
 export interface LlmUsageInput {
@@ -21,6 +22,7 @@ export interface HunterUsageInput {
   accountId: string;
   apiKeyId?: string;
   domain?: string;
+  /** Raw email — will be SHA-256 hashed before storage; never persisted in plaintext */
   email?: string;
   endpoint: "domain_search" | "email_finder" | "email_verifier" | "account_information";
   requestsUsed?: number;
@@ -64,11 +66,14 @@ export class ExternalApiUsageService {
   /** Record Hunter.io API usage */
   static async recordHunterUsage(input: HunterUsageInput): Promise<void> {
     try {
+      const emailHash = input.email
+        ? createHash("sha256").update(input.email.toLowerCase().trim()).digest("hex")
+        : undefined;
       await db.insert(hunterUsageLog).values({
         accountId: input.accountId,
         apiKeyId: input.apiKeyId,
         domain: input.domain,
-        email: input.email,
+        emailHash,
         endpoint: input.endpoint,
         requestsUsed: input.requestsUsed ?? 1,
         resultFound: input.resultFound === true ? 1 : input.resultFound === false ? 0 : null,

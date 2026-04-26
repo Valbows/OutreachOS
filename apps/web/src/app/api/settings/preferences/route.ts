@@ -3,6 +3,7 @@ import { getAuthAccount } from "@/lib/auth/session";
 import { db, accounts } from "@outreachos/db";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
+import { CryptoService } from "@outreachos/services";
 
 const preferencesSchema = z.object({
   llmProvider: z.enum(["gemini", "openrouter"]).optional(),
@@ -19,19 +20,19 @@ async function getAccountPreferences(accountId: string) {
       llmModel: accounts.llmModel,
       senderDomain: accounts.senderDomain,
       gmailAddress: accounts.gmailAddress,
-      gmailRefreshToken: accounts.gmailRefreshToken,
+      gmailRefreshTokenEncrypted: accounts.gmailRefreshTokenEncrypted,
     })
     .from(accounts)
     .where(eq(accounts.id, accountId))
     .limit(1);
 
-  // Return boolean flag instead of sensitive token
+  // Return boolean flag instead of sensitive token — ciphertext is never exposed
   return {
     llmProvider: record?.llmProvider ?? "gemini",
     llmModel: record?.llmModel ?? "",
     senderDomain: record?.senderDomain ?? "",
     gmailAddress: record?.gmailAddress ?? "",
-    gmailConnected: !!record?.gmailAddress && !!record?.gmailRefreshToken,
+    gmailConnected: !!record?.gmailAddress && !!record?.gmailRefreshTokenEncrypted,
   };
 }
 
@@ -76,16 +77,28 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    // Get current preferences (safe for API response) and raw token for internal use
+    // Get current preferences (safe for API response)
     const currentPreferences = await getAccountPreferences(account.id);
-    
-    // Query raw gmailRefreshToken separately for internal use
+
+    // Query the encrypted token to preserve it when caller doesn't include the field
     const [rawRecord] = await db
-      .select({ gmailRefreshToken: accounts.gmailRefreshToken })
+      .select({ gmailRefreshTokenEncrypted: accounts.gmailRefreshTokenEncrypted })
       .from(accounts)
       .where(eq(accounts.id, account.id))
       .limit(1);
-    const currentRefreshToken = rawRecord?.gmailRefreshToken ?? null;
+    const currentRefreshTokenEncrypted = rawRecord?.gmailRefreshTokenEncrypted ?? null;
+
+    // Resolve next refresh token — encrypt plaintext input, allow null to clear
+    let nextRefreshTokenEncrypted: string | null;
+    if ("gmailRefreshToken" in parsed.data) {
+      const incoming = parsed.data.gmailRefreshToken;
+      const trimmed = typeof incoming === "string" ? incoming.trim() : "";
+      nextRefreshTokenEncrypted = trimmed
+        ? CryptoService.encrypt(trimmed)
+        : null;
+    } else {
+      nextRefreshTokenEncrypted = currentRefreshTokenEncrypted;
+    }
 
     const nextValues = {
       llmProvider: parsed.data.llmProvider ?? currentPreferences.llmProvider,
@@ -107,12 +120,7 @@ export async function PUT(request: NextRequest) {
             ? null
             : (parsed.data.gmailAddress?.trim() || null)
           : (currentPreferences.gmailAddress || null),
-      gmailRefreshToken:
-        "gmailRefreshToken" in parsed.data
-          ? parsed.data.gmailRefreshToken === null
-            ? null
-            : (parsed.data.gmailRefreshToken?.trim() || null)
-          : currentRefreshToken,
+      gmailRefreshTokenEncrypted: nextRefreshTokenEncrypted,
     };
 
     await db
@@ -122,7 +130,7 @@ export async function PUT(request: NextRequest) {
         llmModel: nextValues.llmModel,
         senderDomain: nextValues.senderDomain,
         gmailAddress: nextValues.gmailAddress,
-        gmailRefreshToken: nextValues.gmailRefreshToken,
+        gmailRefreshTokenEncrypted: nextValues.gmailRefreshTokenEncrypted,
         updatedAt: new Date(),
       })
       .where(eq(accounts.id, account.id));
@@ -133,7 +141,8 @@ export async function PUT(request: NextRequest) {
         llmModel: nextValues.llmModel ?? "",
         senderDomain: nextValues.senderDomain ?? "",
         gmailAddress: nextValues.gmailAddress ?? "",
-        gmailConnected: !!nextValues.gmailAddress && !!nextValues.gmailRefreshToken,
+        gmailConnected:
+          !!nextValues.gmailAddress && !!nextValues.gmailRefreshTokenEncrypted,
       },
       message: "Preferences updated",
     });

@@ -6,6 +6,14 @@ import Link from "next/link";
 import { Button } from "@/components/ui";
 import { useState } from "react";
 
+interface SendProgress {
+  total: number;
+  sent: number;
+  failed: number;
+  done?: boolean;
+  error?: string;
+}
+
 const TYPE_LABELS: Record<string, string> = {
   one_time: "One-Time",
   journey: "Journey",
@@ -26,11 +34,90 @@ const STATUS_STYLES: Record<string, string> = {
 export default function CampaignDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const { data: campaign, isLoading, error } = useCampaign(id);
+  const { data: campaign, isLoading, error, refetch } = useCampaign(id);
   const deleteMutation = useDeleteCampaign();
   const updateMutation = useUpdateCampaign();
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [statusUpdateError, setStatusUpdateError] = useState<string | null>(null);
+  const [isSending, setIsSending] = useState(false);
+  const [sendProgress, setSendProgress] = useState<SendProgress | null>(null);
+  const [sendError, setSendError] = useState<string | null>(null);
+
+  const handleSendCampaign = async () => {
+    setIsSending(true);
+    setSendProgress(null);
+    setSendError(null);
+
+    try {
+      const response = await fetch(`/api/campaigns/${id}/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+
+      if (!response.ok) {
+        let errorMessage = `Request failed: ${response.status} ${response.statusText}`;
+        try {
+          const errorData = await response.json();
+          if (errorData.error) errorMessage = errorData.error;
+        } catch {
+          const text = await response.text().catch(() => "");
+          if (text) errorMessage = `${errorMessage} — ${text}`;
+        }
+        throw new Error(errorMessage);
+      }
+
+      // Handle streaming response
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder("utf-8");
+
+      if (!reader) {
+        throw new Error("No response body");
+      }
+
+      const processLine = (line: string) => {
+        if (!line.startsWith("data: ")) return;
+        try {
+          const data: SendProgress = JSON.parse(line.slice(6));
+          setSendProgress(data);
+          if (data.done) {
+            setIsSending(false);
+            // Refresh campaign data to get updated status
+            refetch();
+          }
+          if (data.error) {
+            setSendError(data.error);
+            setIsSending(false);
+          }
+        } catch {
+          // Ignore parse errors
+        }
+      };
+
+      let buffer = "";
+      while (true) {
+        const { done, value } = await reader.read();
+
+        if (done) {
+          // Flush any remaining buffered line
+          if (buffer) processLine(buffer);
+          break;
+        }
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        // Keep the last (potentially incomplete) segment for the next chunk
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          processLine(line);
+        }
+      }
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : "Failed to send campaign");
+      setIsSending(false);
+    }
+  };
 
   if (isLoading) {
     return (
@@ -160,8 +247,32 @@ export default function CampaignDetailPage() {
           <div className="rounded-xl border border-outline-variant bg-surface-container-low p-4">
             <h3 className="text-sm font-medium text-on-surface mb-3">Actions</h3>
             <div className="space-y-2">
+              {/* Send Campaign Button - for draft/scheduled campaigns */}
+              {(campaign.status === "draft" || campaign.status === "scheduled") && (
+                <>
+                  <Button
+                    className="w-full"
+                    onClick={handleSendCampaign}
+                    disabled={isSending}
+                  >
+                    {isSending ? "Sending..." : "Send Campaign"}
+                  </Button>
+                  {sendProgress && (
+                    <div className="text-xs text-on-surface-variant">
+                      Sent: {sendProgress.sent} / {sendProgress.total}
+                      {sendProgress.failed > 0 && (
+                        <span className="text-error ml-2">({sendProgress.failed} failed)</span>
+                      )}
+                    </div>
+                  )}
+                  {sendError && (
+                    <div className="text-xs text-error">{sendError}</div>
+                  )}
+                </>
+              )}
               {campaign.status === "draft" && (
                 <Button
+                  variant="secondary"
                   className="w-full"
                   onClick={async () => {
                     setStatusUpdateError(null);

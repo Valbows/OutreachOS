@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { FormService } from "@outreachos/services";
+import { FormService, hashIpAddress } from "@outreachos/services";
 import { db, formTemplates } from "@outreachos/db";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
@@ -38,17 +38,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Form not found" }, { status: 404 });
     }
 
-    // Extract client IP: x-forwarded-for may contain multiple IPs, take the first one
+    // Extract and immediately hash the client IP — raw IP is never stored
     const forwardedFor = request.headers.get("x-forwarded-for");
-    const ipAddress = forwardedFor
+    const rawIp = forwardedFor
       ? forwardedFor.split(",")[0]?.trim()
       : request.headers.get("x-real-ip") ?? undefined;
+    const hashedIp = rawIp ? hashIpAddress(rawIp) : undefined;
 
     const result = await FormService.submit(
       {
         formId: parsed.data.formId,
         data: parsed.data.data,
-        ipAddress,
+        hashedIp,
         userAgent: request.headers.get("user-agent") ?? undefined,
       },
       form.accountId,

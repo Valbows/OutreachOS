@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthAccount } from "@/lib/auth/session";
 import { CampaignService } from "@outreachos/services";
+import { db, accounts } from "@outreachos/db";
+import { eq } from "drizzle-orm";
 import { z } from "zod";
 
 export const dynamic = "force-dynamic";
 
 const sendSchema = z.object({
-  fromEmail: z.string().email(),
+  fromEmail: z.string().email().optional(), // Optional - will use connected Gmail if not provided
   fromName: z.string().optional(),
   replyTo: z.string().email().optional(),
 });
@@ -39,31 +41,54 @@ export async function POST(
       );
     }
 
+    // Get connected Gmail address (or use provided fromEmail as fallback)
+    const [accountRecord] = await db
+      .select({ gmailAddress: accounts.gmailAddress })
+      .from(accounts)
+      .where(eq(accounts.id, account.id))
+      .limit(1);
+
+    console.log("[Campaign Send] gmailAddress configured:", !!accountRecord?.gmailAddress);
+
+    const fromEmail = parsed.data.fromEmail || accountRecord?.gmailAddress;
+    console.log("[Campaign Send] fromEmail resolved:", !!fromEmail);
+
+    if (!fromEmail) {
+      return NextResponse.json(
+        { error: "No sender email configured. Please connect your Gmail account in settings or provide a fromEmail." },
+        { status: 400 },
+      );
+    }
+
     // Stream progress updates
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       async start(controller) {
         try {
+          console.log("[Campaign Send] Starting stream...");
           const result = await CampaignService.sendCampaign(
             account.id,
             id,
             {
               resendApiKey,
-              fromEmail: parsed.data.fromEmail,
-              fromName: parsed.data.fromName,
+              fromEmail,
+              fromName: parsed.data.fromName ?? account.name,
               replyTo: parsed.data.replyTo,
             },
             (progress) => {
+              console.log("[Campaign Send] Progress:", progress);
               controller.enqueue(
                 encoder.encode(`data: ${JSON.stringify(progress)}\n\n`),
               );
             },
           );
+          console.log("[Campaign Send] Complete:", result);
           controller.enqueue(
             encoder.encode(`data: ${JSON.stringify({ ...result, done: true })}\n\n`),
           );
         } catch (err) {
           const message = err instanceof Error ? err.message : "Send failed";
+          console.error("[Campaign Send] Error:", err);
           controller.enqueue(
             encoder.encode(`data: ${JSON.stringify({ error: message })}\n\n`),
           );

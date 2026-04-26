@@ -146,17 +146,24 @@ export class CampaignService {
     config: SendConfig,
     onProgress?: (progress: SendProgress) => void,
   ): Promise<SendProgress> {
+    console.log("[CampaignService] Starting sendCampaign for:", campaignId, "from:", config.fromEmail);
+    
     const campaign = await CampaignService.getById(accountId, campaignId);
+    console.log("[CampaignService] Campaign:", campaign ? { id: campaign.id, templateId: campaign.templateId, groupId: campaign.groupId } : null);
+    
     if (!campaign) throw new Error("Campaign not found");
     if (!campaign.templateId) throw new Error("Campaign has no template assigned");
 
     const template = await TemplateService.getById(accountId, campaign.templateId);
+    console.log("[CampaignService] Template:", template ? { id: template.id, hasSubject: !!template.subject, hasBody: !!template.bodyHtml } : null);
+    
     if (!template) throw new Error("Template not found");
     if (!template.subject) throw new Error("Template has no subject line");
     if (!template.bodyHtml) throw new Error("Template has no body content");
 
     // Get contacts in the campaign's group
     const contactList = await CampaignService.getCampaignContacts(accountId, campaign.groupId);
+    console.log("[CampaignService] Contacts found:", contactList.length);
 
     const progress: SendProgress = { total: contactList.length, sent: 0, failed: 0 };
 
@@ -205,6 +212,7 @@ export class CampaignService {
       let sent = false;
       while (!sent && retryCount < MAX_RETRIES) {
         try {
+          console.log("[CampaignService] Sending email to:", contact.email, "subject:", renderedSubject);
           const result = await resend.emails.send({
             from: config.fromName
               ? `${config.fromName} <${config.fromEmail}>`
@@ -215,6 +223,8 @@ export class CampaignService {
             replyTo: config.replyTo,
           });
 
+          console.log("[CampaignService] Resend result:", result);
+          
           // Create message instance record
           const messageId = result.data?.id;
           await db.insert(messageInstances).values({
@@ -251,6 +261,7 @@ export class CampaignService {
           progress.sent++;
           sent = true;
         } catch (err) {
+          console.error("[CampaignService] Email send failed:", err);
           retryCount++;
           const errorCode = CampaignService.getResendErrorCode(err);
           const isRetryable = CampaignService.isRetryableError(errorCode);
