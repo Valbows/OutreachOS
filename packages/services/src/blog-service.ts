@@ -139,6 +139,7 @@ export class BlogService {
 
   /** Get all published slugs for static generation */
   static async getAllSlugs(): Promise<string[]> {
+    // Cache-bust: 2026-04-26 - force rebuild after CI cache issue
     try {
       const posts = await db
         .select({ slug: blogPosts.slug })
