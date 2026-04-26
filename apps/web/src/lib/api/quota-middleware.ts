@@ -5,7 +5,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { BillingService, type UsageType } from "@outreachos/services";
-import type { ApiContext } from "./auth.js";
+import type { ApiContext } from "./auth";
 
 export interface QuotaConfig {
   /** Usage type to check against */

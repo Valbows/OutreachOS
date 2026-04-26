@@ -2058,4 +2058,48 @@ Don't gate test behavior on env vars that are set for unrelated reasons elsewher
 
 The latter is preferable — it makes the unit/integration boundary explicit at the file-system level.
 
+---
+
+## 2026-04-26 — Bug Fix: Turbopack build fails on `.js` extension imports
+
+**Type:** Build/deployment (Turbopack module resolution)
+**Impact:** Blocking — `pnpm run build` fails in `deploy.yml`
+
+### Failure
+```
+./apps/web/src/lib/api/auth.ts:10:1
+Module not found: Can't resolve './rate-limiter.js'
+> 10 | import { checkRateLimit, DEFAULT_RATE_LIMIT } from "./rate-limiter.js";
+```
+
+### Root Cause
+Two outlier files used explicit `.js` extensions on relative imports of sibling `.ts` files:
+- `apps/web/src/lib/api/auth.ts:10` → `./rate-limiter.js`
+- `apps/web/src/lib/api/quota-middleware.ts:8` → `./auth.js`
+
+The rest of the `apps/web` codebase uses **extensionless** relative imports (verified across `lib/api/auth.test.ts`, `security-audit.test.ts`, `blog/read-time.test.ts`, etc.).
+
+The `.js` pattern was introduced in commit `1b94376` ("comprehensive bug fixes — Gmail OAuth, security, error handling, tests, docs", Apr 17 2026). It worked under earlier Next.js builds (TypeScript `moduleResolution: bundler` resolves `.js` to `.ts`), but **Next.js 16.2.1 with Turbopack** does not auto-resolve explicit `.js` extensions to sibling `.ts` source files in the app's own source tree.
+
+Vitest (esbuild) and `tsc --noEmit` both worked fine, so the inconsistency wasn't caught until production build.
+
+### Fix
+Removed `.js` extensions from both imports to match the codebase convention:
+- `auth.ts:10`: `./rate-limiter.js` → `./rate-limiter`
+- `quota-middleware.ts:8`: `./auth.js` → `./auth`
+
+### Verification
+- `pnpm exec next build` (apps/web): success — full route tree compiled
+- `pnpm run lint`: clean
+- `pnpm --filter @outreachos/web type-check`: clean
+- `pnpm --filter @outreachos/web exec vitest run`: 695/695 passing
+
+### Side Note
+While reproducing locally, my stale `packages/services/dist/index.js` also reported `Export hashIpAddress doesn't exist`. This was a **local-only artifact issue** — my dist was generated before `hashIpAddress` was added to `form-service.ts`. CI was unaffected because turbo cache restores the correct dist (verified by checking the CI log `@outreachos/services:build` cache-hit output of 166.02 KB matches a fresh local rebuild). Resolved locally by `pnpm --filter @outreachos/services build`.
+
+### Lesson
+- Production builds (Next.js `next build` with Turbopack) are stricter than dev tooling about path resolution.
+- Match the codebase convention: extensionless relative imports for `.ts` files in app source.
+- Reserve explicit `.js` extensions for **published packages** built with tsup/Rollup that emit native ESM (where Node's ESM loader requires extensions). For app-internal code under bundler resolution, omit the extension.
+
 

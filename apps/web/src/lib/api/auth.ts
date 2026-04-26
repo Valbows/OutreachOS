@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db, apiKeys, apiUsage, accounts, PLAN_RATE_LIMITS, type PlanTier, type RateLimitConfig } from "@outreachos/db";
 import { eq, and, isNull } from "drizzle-orm";
 import bcrypt from "bcrypt";
-import { checkRateLimit, DEFAULT_RATE_LIMIT } from "./rate-limiter.js";
+import { checkRateLimit, DEFAULT_RATE_LIMIT } from "./rate-limiter";
 
 export interface ApiContext {
   accountId: string;
