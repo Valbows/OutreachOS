@@ -139,12 +139,22 @@ export class BlogService {
 
   /** Get all published slugs for static generation */
   static async getAllSlugs(): Promise<string[]> {
-    const posts = await db
-      .select({ slug: blogPosts.slug })
-      .from(blogPosts)
-      .where(isNotNull(blogPosts.publishedAt));
+    try {
+      const posts = await db
+        .select({ slug: blogPosts.slug })
+        .from(blogPosts)
+        .where(isNotNull(blogPosts.publishedAt));
 
-    return posts.map((p) => p.slug);
+      return posts.map((p) => p.slug);
+    } catch (error) {
+      // Gracefully handle missing table during CI build (migrations not yet run)
+      // or other database errors. Empty array = no static paths generated.
+      if (error instanceof Error && error.message.includes("relation \"blog_posts\" does not exist")) {
+        return [];
+      }
+      // Re-throw other unexpected errors
+      throw error;
+    }
   }
 
   /** List posts by tag */

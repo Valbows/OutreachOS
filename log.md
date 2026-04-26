@@ -2176,3 +2176,39 @@ Updated `packages/db/src/index.test.ts`:
 - When introducing conditional driver selection, unit tests must verify both branches
 - Mocks should align with the actual code's dependency usage
 - Test failures in CI may indicate test fragility, not actual code bugs
+
+---
+
+## 2026-04-26 — Bug Fix: Handle missing blog_posts table during CI build
+
+**Type:** Build/deployment (database readiness)
+**Impact:** Blocking — `next build` fails when `blog_posts` table doesn't exist
+
+### Failure
+```
+Error: Failed query: select "slug" from "blog_posts" where "blog_posts"."published_at" is not null
+[cause]: error: relation "blog_posts" does not exist
+    at ... BlogService.getAllSlugs
+    at async m (... generateStaticParams)
+```
+
+### Root Cause
+The CI `deploy.yml` workflow runs `pnpm run build` before database migrations have been applied. During build, Next.js `generateStaticParams` for `/blog/[slug]` calls `BlogService.getAllSlugs()`, which queries the `blog_posts` table. Since the table doesn't exist in the fresh test database, the query throws and crashes the build.
+
+### Fix
+Updated `packages/services/src/blog-service.ts` `getAllSlugs()` method:
+- Wrapped query in try-catch block
+- If error message contains `relation "blog_posts" does not exist`, return empty array `[]`
+- Other unexpected errors are re-thrown to preserve fail-fast behavior for real issues
+
+This allows the build to complete with zero static blog pages when the table doesn't exist, which is appropriate for:
+- CI builds before migrations run
+- Fresh deployments where blog hasn't been set up yet
+
+### Verification
+- `pnpm run build`: success (4 tasks)
+- `pnpm run lint`: clean
+- `pnpm run test:unit`: 695/695 passing
+
+### Architecture Decision
+Graceful degradation for static generation is preferred over hard build failures. The blog functionality is additive—if the table exists, static pages are generated; if not, the routes become dynamic. This aligns with the "progressive enhancement" philosophy and prevents build-time coupling to database migration order.
