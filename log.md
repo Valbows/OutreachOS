@@ -2220,6 +2220,33 @@ Graceful degradation for static generation is preferred over hard build failures
 
 ---
 
+## 2026-04-26 — Bug Fix: Add error handling to listPublished for /blog page
+
+**Type:** Build/deployment (error handling)
+**Impact:** Blocking — CI build failing on /blog page
+
+### Follow-up Failure
+Error moved from `/blog/[slug]` to `/blog`: `relation "blog_posts" does not exist` during prerendering.
+
+### Root Cause Analysis
+The `/blog` page (`apps/web/src/app/blog/page.tsx`) calls `BlogService.listPublished(20, 0)` to fetch posts for the list view. This is a different function from `getAllSlugs()` which I had already fixed. The `listPublished()` function had no error handling, so it threw when the table was missing.
+
+### Fix
+Added identical error handling to `listPublished()` in `packages/services/src/blog-service.ts`:
+- Try-catch around the db query
+- Check `errMsg.includes("blog_posts")` for wrapped drizzle errors
+- Walk cause chain for `code === "42P01"` for pg errors
+- Return empty array `[]` instead of throwing on missing table
+
+### Verification
+- Local build: success (4/4 packages)
+- Commit: `cb52329` on both branches
+
+### Lesson
+When fixing build-time errors for SSG/ISR pages, check ALL functions called by the page component, not just the one that failed first. Static generation can fail at any query during the render phase.
+
+---
+
 ## 2026-04-26 — Bug Fix: Walk error cause chain for wrapped drizzle errors
 
 **Type:** Build/deployment (error handling)
