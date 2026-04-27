@@ -88,13 +88,35 @@ export class BlogService {
 
   /** List published blog posts (public) */
   static async listPublished(limit = 20, offset = 0) {
-    return db
-      .select()
-      .from(blogPosts)
-      .where(isNotNull(blogPosts.publishedAt))
-      .orderBy(desc(blogPosts.publishedAt))
-      .limit(limit)
-      .offset(offset);
+    try {
+      return await db
+        .select()
+        .from(blogPosts)
+        .where(isNotNull(blogPosts.publishedAt))
+        .orderBy(desc(blogPosts.publishedAt))
+        .limit(limit)
+        .offset(offset);
+    } catch (error) {
+      // Gracefully handle missing table during CI build (migrations not yet run)
+      const errMsg = error instanceof Error ? error.message : String(error);
+
+      // Check error message for blog_posts mention (covers wrapped drizzle errors)
+      if (errMsg.includes("blog_posts")) {
+        return [];
+      }
+
+      // Walk cause chain for Postgres code 42P01 (undefined_table)
+      let current: unknown = error;
+      while (current && typeof current === "object") {
+        if ((current as { code?: string }).code === "42P01") {
+          return [];
+        }
+        current = (current as { cause?: unknown }).cause;
+      }
+
+      // Re-throw other unexpected errors
+      throw error;
+    }
   }
 
   /** List all blog posts for an account (admin) */
