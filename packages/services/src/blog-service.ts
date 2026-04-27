@@ -139,7 +139,7 @@ export class BlogService {
 
   /** Get all published slugs for static generation */
   static async getAllSlugs(): Promise<string[]> {
-    // Cache-bust-v2: 2026-04-26 - force rebuild after CI cache issue
+    // Cache-bust-v3: 2026-04-26 - walk error cause chain for 42P01
     try {
       const posts = await db
         .select({ slug: blogPosts.slug })
@@ -149,16 +149,23 @@ export class BlogService {
       return posts.map((p) => p.slug);
     } catch (error) {
       // Gracefully handle missing table during CI build (migrations not yet run)
-      // or other database errors. Empty array = no static paths generated.
-      // Check both error code (42P01 = undefined_table) and message for robustness.
+      // Empty array = no static paths generated. The blog routes will use ISR/SSR.
       const errMsg = error instanceof Error ? error.message : String(error);
-      const errCode = (error as { code?: string }).code;
-      if (
-        errCode === "42P01" ||
-        errMsg.includes("relation \"blog_posts\" does not exist")
-      ) {
+
+      // Check error message for blog_posts mention (covers wrapped drizzle errors)
+      if (errMsg.includes("blog_posts")) {
         return [];
       }
+
+      // Walk cause chain for Postgres code 42P01 (undefined_table)
+      let current: unknown = error;
+      while (current && typeof current === "object") {
+        if ((current as { code?: string }).code === "42P01") {
+          return [];
+        }
+        current = (current as { cause?: unknown }).cause;
+      }
+
       // Re-throw other unexpected errors
       throw error;
     }
