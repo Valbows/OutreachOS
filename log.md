@@ -2327,6 +2327,83 @@ The `playwright.yml` workflow ran `pnpm exec playwright install` from the reposi
 ### Fix
 Updated `.github/workflows/playwright.yml` (both `functional-tests` and `security-tests` jobs):
 - Changed: `pnpm exec playwright install --with-deps chromium`
+
+---
+
+## 2026-04-26 — Deployment: Vercel Hobby with GitHub Actions Cron Jobs
+
+**Type:** Build/deployment (infrastructure)
+**Impact:** Blocking — Vercel Hobby tier limited to 1 cron/day
+
+### Problem
+Vercel Hobby (free tier) deployment failed with:
+```
+Hobby accounts are limited to daily cron jobs. This cron expression (*/15 * * * *)
+would run more than once per day. Upgrade to the Pro plan to unlock all Cron Jobs features.
+```
+
+The app requires 3 cron jobs for real-time email operations:
+- `inbox-poll`: every 5 min (check email replies)
+- `journey-scheduler`: every 15 min (send follow-up emails)
+- `newsletter-send`: every 10 min (deliver newsletters)
+
+### Solution
+**Option A: Reduce to daily crons (breaks functionality)** - Not acceptable for outreach platform
+**Option B: Remove crons, use GitHub Actions (chosen)** - Free, secure, within limits
+**Option C: Upgrade to Vercel Pro ($20/mo)** - Future option when scaling
+
+### Implementation
+1. **Removed crons from `vercel.json`** — Allows Hobby deployment
+2. **Created `.github/workflows/cron-jobs.yml`** — Triggers cron endpoints via HTTP
+
+GitHub Actions workflow features:
+- Schedule: `*/5`, `*/10`, `*/15` minute intervals
+- Calls `${{ secrets.VERCEL_URL }}/api/cron/*` with `Authorization: Bearer ${{ secrets.CRON_SECRET }}`
+- Validates HTTP 200 response, fails job on error
+- Manual trigger via `workflow_dispatch` for testing
+
+### Required GitHub Secrets
+Configure in **Settings → Secrets and variables → Actions**:
+- `CRON_SECRET` — Must match `CRON_SECRET` env var in Vercel
+- `VERCEL_URL` — Deployed domain (e.g., `https://outreachos.vercel.app`)
+
+### Resource Limits
+GitHub Actions free tier: **2,000 minutes/month**
+Estimated usage: ~1,500 minutes/month for these 3 crons
+
+### Future Expansion Pathways
+When scaling beyond GitHub Actions limits:
+
+| Option | Cost | Pros | Cons |
+|--------|------|------|------|
+| Vercel Pro | $20/mo | Native crons, simple | Monthly cost |
+| Upstash QStash | Free tier: 100 req/day | Serverless, pay-per-use | May need paid tier |
+| EasyCron.com | Free tier available | Simple UI, no code changes | External dependency |
+| Self-hosted cron | VPS cost | Full control | Infrastructure overhead |
+| GitHub Pro | $4/mo | 3,000 min/month | Still may hit limits |
+
+### Architecture Notes for Future
+The cron endpoints in `/api/cron/*` are already secured with:
+- Bearer token auth via `CRON_SECRET`
+- Stateless design — no session dependencies
+- HTTP GET for simple triggering (can use any HTTP scheduler)
+
+Migrating to any alternative scheduler requires:
+1. Configure scheduler to hit endpoint URL
+2. Set `Authorization: Bearer <CRON_SECRET>` header
+3. Done — no code changes needed
+
+### Files Modified
+- `vercel.json` — Removed `crons` array
+- `.github/workflows/cron-jobs.yml` — Created new
+- `log.md` — This entry
+
+### Verification
+- [ ] Deploy to Vercel Hobby succeeds
+- [ ] Add `CRON_SECRET` and `VERCEL_URL` to GitHub secrets
+- [ ] Test manual trigger via Actions tab
+- [ ] Verify cron jobs appear in Actions history
+- [ ] Monitor for 24h to ensure consistent execution
 - To: `pnpm --filter @outreachos/web exec playwright install --with-deps chromium`
 
 This runs the playwright binary from the correct workspace where it's installed.

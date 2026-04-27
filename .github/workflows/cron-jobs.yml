@@ -1,0 +1,79 @@
+name: Cron Jobs
+
+on:
+  schedule:
+    # Run every 5 minutes (inbox poll - most critical for email replies)
+    - cron: "*/5 * * * *"
+    # Run every 10 minutes (newsletter send)
+    - cron: "*/10 * * * *"
+    # Run every 15 minutes (journey scheduler)
+    - cron: "*/15 * * * *"
+  workflow_dispatch: # Allow manual trigger for testing
+
+jobs:
+  inbox-poll:
+    name: Poll Inboxes for Replies
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.job }}
+      cancel-in-progress: false
+    if: github.event.schedule == '*/5 * * * *' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Trigger inbox poll
+        run: |
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.VERCEL_URL }}/api/cron/inbox-poll")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+          echo "HTTP Code: $HTTP_CODE"
+          echo "Response: $BODY"
+          if [ "$HTTP_CODE" -ne 200 ]; then
+            echo "::error::Inbox poll failed with HTTP $HTTP_CODE"
+            exit 1
+          fi
+
+  newsletter-send:
+    name: Send Newsletter Batches
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.job }}
+      cancel-in-progress: false
+    if: github.event.schedule == '*/10 * * * *' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Trigger newsletter send
+        run: |
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.VERCEL_URL }}/api/cron/newsletter-send")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+          echo "HTTP Code: $HTTP_CODE"
+          echo "Response: $BODY"
+          if [ "$HTTP_CODE" -ne 200 ]; then
+            echo "::error::Newsletter send failed with HTTP $HTTP_CODE"
+            exit 1
+          fi
+
+  journey-scheduler:
+    name: Schedule Journey Steps
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.job }}
+      cancel-in-progress: false
+    # Run on 15-min schedule OR when manually triggered
+    if: github.event.schedule == '*/15 * * * *' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Trigger journey scheduler
+        run: |
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.VERCEL_URL }}/api/cron/journey-scheduler")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+          echo "HTTP Code: $HTTP_CODE"
+          echo "Response: $BODY"
+          if [ "$HTTP_CODE" -ne 200 ]; then
+            echo "::error::Journey scheduler failed with HTTP $HTTP_CODE"
+            exit 1
+          fi
