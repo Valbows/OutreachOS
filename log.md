@@ -2471,3 +2471,70 @@ After this change:
 
 ### Architecture Note for Future Apps
 If we add more deployable apps (e.g., a marketing site, admin panel), each should be its own Vercel project with its own Root Directory pointing to its app folder (e.g., `apps/marketing`, `apps/admin`). This is the standard Vercel monorepo pattern.
+
+---
+
+## 2026-04-27 — Bug Fix: Vercel cannot resolve workspace packages during Next build
+
+**Type:** Build/deployment (monorepo workspace resolution)
+**Impact:** Blocking — deployment reaches `next build` but fails with `Module not found`
+
+### Failure
+After fixing the Vercel Root Directory, deployment advanced to the actual app build and failed with errors like:
+```
+Module not found: Can't resolve '@outreachos/db'
+Module not found: Can't resolve '@outreachos/services'
+```
+
+### Root Cause
+`apps/web` depends on internal workspace packages `@outreachos/db` and `@outreachos/services`.
+
+Those packages export their runtime entrypoints from `dist/index.js`:
+- `packages/db/package.json` → `exports["."].import = "./dist/index.js"`
+- `packages/services/package.json` → `exports["."].import = "./dist/index.js"`
+
+Vercel was running:
+```
+pnpm --filter @outreachos/web build
+```
+
+That command only runs `next build` for the web app. It does **not** build the dependent workspace packages first, so their `dist/` outputs do not exist in a clean deployment environment. Next/Turbopack then fails to resolve the packages.
+
+This was reproduced locally by deleting:
+- `packages/db/dist`
+- `packages/services/dist`
+
+and then running:
+```
+pnpm --filter @outreachos/web build
+```
+
+Result: same module resolution failure as Vercel.
+
+### Fix
+Updated `apps/web/vercel.json`:
+- Added `buildCommand: "pnpm turbo run build --filter=@outreachos/web"`
+
+This uses Turbo's task graph, which honors the root `turbo.json` dependency chain:
+- `@outreachos/web#build` depends on `^build`
+- Therefore `@outreachos/db#build` runs first
+- Then `@outreachos/services#build` runs
+- Then `@outreachos/web#build` runs
+
+### Verification
+Local validation from `apps/web`:
+```
+pnpm turbo run build --filter=@outreachos/web
+```
+
+Result:
+- `@outreachos/db` built successfully
+- `@outreachos/services` built successfully
+- `@outreachos/web` `next build` completed successfully
+
+### Files Modified
+- `apps/web/vercel.json` — added explicit Turbo-based `buildCommand`
+- `log.md` — this entry
+
+### Lesson
+In a pnpm/Turborepo monorepo, a workspace app that imports internal packages with runtime entrypoints in `dist/` cannot rely on `pnpm --filter <app> build` alone during clean CI or Vercel builds. The build must run through Turbo (or otherwise prebuild dependencies) so upstream workspace artifacts exist before Next.js compiles the app.
