@@ -2220,6 +2220,41 @@ Graceful degradation for static generation is preferred over hard build failures
 
 ---
 
+## 2026-04-26 — Bug Fix: Walk error cause chain for wrapped drizzle errors
+
+**Type:** Build/deployment (error handling)
+**Impact:** Blocking — CI build still failing despite try-catch
+
+### Follow-up Failure
+Same error: `relation "blog_posts" does not exist` during `generateStaticParams`
+
+### Root Cause Analysis
+The previous fix assumed the error object would directly have `.code === "42P01"` and `.message` containing `"relation blog_posts does not exist"`. However, drizzle-orm wraps database errors in a parent Error with message `"Failed query: select ..."` and puts the actual pg error in the `.cause` property.
+
+The wrapping error:
+- Message: `Failed query: select "slug" from "blog_posts"...`
+- Has NO `.code` property
+- Has `.cause` containing the actual pg error with `code: '42P01'`
+
+This meant both our checks (`errCode === "42P01"` and `errMsg.includes("relation...")`) failed, so the error was re-thrown.
+
+### Enhanced Fix
+Updated `packages/services/src/blog-service.ts` `getAllSlugs()`:
+- Changed `// Cache-bust-v2` to `// Cache-bust-v3` to force rebuild
+- Check `errMsg.includes("blog_posts")` — the wrapped error message contains "blog_posts" in the query text
+- Walk the error cause chain with a while loop: `current = current.cause` looking for `code === "42P01"`
+
+### Verification
+- Local build: success
+- Commit: `f266f44` on both branches
+
+### Lesson
+- Wrapped errors (drizzle-orm, Next.js, etc.) may put the actual error in `.cause`
+- Always check both the direct error and the cause chain when handling database errors
+- The query text in a wrapped error message can serve as a reliable fallback check
+
+---
+
 ## 2026-04-26 — Bug Fix: Enhanced error handling for missing blog_posts table
 
 **Type:** Build/deployment (robustness improvement)
