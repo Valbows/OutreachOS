@@ -2414,3 +2414,60 @@ This runs the playwright binary from the correct workspace where it's installed.
 
 ### Lesson
 In monorepos with pnpm workspaces, `pnpm exec` from root only sees binaries from root `package.json`. Use `pnpm --filter <workspace> exec <command>` to run binaries from specific workspaces.
+
+---
+
+## 2026-04-27 — Bug Fix: Vercel "No Next.js version detected" in monorepo
+
+**Type:** Build/deployment (monorepo configuration)
+**Impact:** Blocking — Vercel deployment fails before build
+
+### Failure
+```
+Error: No Next.js version detected. Make sure your package.json has "next" 
+in either "dependencies" or "devDependencies". Also check your Root Directory 
+setting matches the directory of your package.json file.
+```
+
+### Root Cause
+Vercel runs framework detection at the project's **Root Directory** (a UI-only setting in Vercel project settings). The Vercel project had Root Directory set to `.` (repo root), where `package.json` does not list `next` as a dependency. The `next` package only exists in `apps/web/package.json`.
+
+The previous root-level `vercel.json` had `framework: "nextjs"` and `outputDirectory: "apps/web/.next"`, but these settings cannot override Vercel's framework detection step which runs **before** the build.
+
+Confirmed by Vercel staff in [community forum](https://community.vercel.com/t/vercel-no-next-js-version-detected-for-next-15-app-in-pnpm-monorepo/18750):
+> "Can you confirm that the Vercel project has the Root directory set as apps/student-web?"
+
+### Fix
+**Code changes:**
+1. Created `apps/web/vercel.json` with `framework: "nextjs"` + headers config
+2. Deleted root `vercel.json` — no longer needed once Root Directory is set
+3. Vercel's Turbo auto-detection handles install/build from the workspace root automatically
+
+**Required Vercel UI change (one-time):**
+1. Go to https://vercel.com/dashboard → OutreachOS project → Settings → General
+2. Find **"Root Directory"** section
+3. Click "Edit" and set to: `apps/web`
+4. Save and redeploy
+
+After this change:
+- Vercel detects `next` in `apps/web/package.json` ✓
+- Turbo auto-detection runs `pnpm install` at workspace root ✓
+- Builds via `turbo run build --filter=@outreachos/web` ✓
+- `apps/web/vercel.json` headers config is picked up ✓
+
+### Files Modified
+- `vercel.json` — Deleted from root
+- `apps/web/vercel.json` — Created with framework + headers config
+- `log.md` — This entry
+
+### Verification
+- [ ] Update Vercel UI Root Directory to `apps/web`
+- [ ] Trigger redeploy
+- [ ] Verify build succeeds and Next.js is detected
+- [ ] Verify blog cache headers are applied to `/blog` and `/blog/:path*`
+
+### Lesson
+**Vercel monorepo deployments require setting Root Directory in the project's UI settings.** No `vercel.json` field can override this — it controls where Vercel runs framework detection. Place `vercel.json` inside the app directory that matches the configured Root Directory.
+
+### Architecture Note for Future Apps
+If we add more deployable apps (e.g., a marketing site, admin panel), each should be its own Vercel project with its own Root Directory pointing to its app folder (e.g., `apps/marketing`, `apps/admin`). This is the standard Vercel monorepo pattern.

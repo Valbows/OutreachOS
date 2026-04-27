@@ -1,9 +1,5 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "pnpm --filter @outreachos/web build",
-  "devCommand": "pnpm --filter @outreachos/web dev",
-  "installCommand": "pnpm install --frozen-lockfile",
-  "outputDirectory": "apps/web/.next",
   "framework": "nextjs",
   "headers": [
     {
