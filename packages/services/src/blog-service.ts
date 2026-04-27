@@ -32,6 +32,28 @@ export interface UpdateBlogPostInput {
 const NEWSLETTER_GROUP_NAME = "newsletter_subscriber";
 
 export class BlogService {
+  private static shouldReturnEmptyPublicBlogResult(error: unknown): boolean {
+    const errMsg = error instanceof Error ? error.message : String(error);
+
+    if (errMsg.includes("DATABASE_URL environment variable is required but not set.")) {
+      return true;
+    }
+
+    if (errMsg.includes("blog_posts")) {
+      return true;
+    }
+
+    let current: unknown = error;
+    while (current && typeof current === "object") {
+      if ((current as { code?: string }).code === "42P01") {
+        return true;
+      }
+      current = (current as { cause?: unknown }).cause;
+    }
+
+    return false;
+  }
+
   // === Blog Post CRUD ===
 
   /** Create a blog post */
@@ -98,20 +120,8 @@ export class BlogService {
         .offset(offset);
     } catch (error) {
       // Gracefully handle missing table during CI build (migrations not yet run)
-      const errMsg = error instanceof Error ? error.message : String(error);
-
-      // Check error message for blog_posts mention (covers wrapped drizzle errors)
-      if (errMsg.includes("blog_posts")) {
+      if (BlogService.shouldReturnEmptyPublicBlogResult(error)) {
         return [];
-      }
-
-      // Walk cause chain for Postgres code 42P01 (undefined_table)
-      let current: unknown = error;
-      while (current && typeof current === "object") {
-        if ((current as { code?: string }).code === "42P01") {
-          return [];
-        }
-        current = (current as { cause?: unknown }).cause;
       }
 
       // Re-throw other unexpected errors
@@ -172,20 +182,8 @@ export class BlogService {
     } catch (error) {
       // Gracefully handle missing table during CI build (migrations not yet run)
       // Empty array = no static paths generated. The blog routes will use ISR/SSR.
-      const errMsg = error instanceof Error ? error.message : String(error);
-
-      // Check error message for blog_posts mention (covers wrapped drizzle errors)
-      if (errMsg.includes("blog_posts")) {
+      if (BlogService.shouldReturnEmptyPublicBlogResult(error)) {
         return [];
-      }
-
-      // Walk cause chain for Postgres code 42P01 (undefined_table)
-      let current: unknown = error;
-      while (current && typeof current === "object") {
-        if ((current as { code?: string }).code === "42P01") {
-          return [];
-        }
-        current = (current as { cause?: unknown }).cause;
       }
 
       // Re-throw other unexpected errors

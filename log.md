@@ -2472,6 +2472,7 @@ After this change:
 ### Architecture Note for Future Apps
 If we add more deployable apps (e.g., a marketing site, admin panel), each should be its own Vercel project with its own Root Directory pointing to its app folder (e.g., `apps/marketing`, `apps/admin`). This is the standard Vercel monorepo pattern.
 
+
 ---
 
 ## 2026-04-27 — Bug Fix: Vercel cannot resolve workspace packages during Next build
@@ -2538,3 +2539,72 @@ Result:
 
 ### Lesson
 In a pnpm/Turborepo monorepo, a workspace app that imports internal packages with runtime entrypoints in `dist/` cannot rely on `pnpm --filter <app> build` alone during clean CI or Vercel builds. The build must run through Turbo (or otherwise prebuild dependencies) so upstream workspace artifacts exist before Next.js compiles the app.
+
+---
+## 2026-04-27 — Bug Fix: Vercel build fails when public blog static generation hits missing DATABASE_URL
+
+**Type:** Build/deployment (environment/config surfaced through public blog build path)
+**Impact:** Blocking — deployment reaches Next.js page data collection and exits with `Failed to collect page data for /blog/[slug]`
+
+### Failure
+After the monorepo workspace resolution issue was fixed, Vercel advanced further into the build and failed during page data collection:
+```
+Error: DATABASE_URL environment variable is required but not set.
+Error: Failed to collect page data for /blog/[slug]
+```
+
+The failing call chain in the Vercel logs was:
+- `/blog/[slug]` `generateStaticParams()`
+- `BlogService.getAllSlugs()`
+- `@outreachos/db` lazy `getDb()`
+- throw because `process.env.DATABASE_URL` was missing
+
+The `/blog` index page also uses `BlogService.listPublished()` during static generation, so it had the same risk.
+
+### Root Cause
+This deployment failure exposed two separate realities:
+
+1. **External configuration issue**
+   - Vercel production did not provide `DATABASE_URL` during the build.
+   - `DEPLOY.md` already requires this environment variable for production.
+
+2. **Code resilience gap**
+   - The public blog build path already tolerated a missing `blog_posts` table by returning empty results.
+   - It did **not** tolerate a missing `DATABASE_URL`, so public marketing/blog pages could hard-fail the entire deployment.
+
+### Fix
+Updated `packages/services/src/blog-service.ts`:
+- added a shared `shouldReturnEmptyPublicBlogResult()` helper
+- treated these cases as empty-result fallbacks for public blog build reads:
+  - missing `DATABASE_URL`
+  - missing `blog_posts` table (`42P01` / wrapped message)
+- applied the fallback only to:
+  - `BlogService.listPublished()`
+  - `BlogService.getAllSlugs()`
+
+This keeps the fix narrow and production-safe:
+- public blog static generation no longer blocks deployment when DB config is absent during build
+- unexpected errors are still re-thrown
+- admin/private DB code paths are unchanged
+
+### Verification
+Validated on `main` with targeted checks:
+```
+pnpm --filter @outreachos/services exec vitest run src/blog-service.test.ts
+pnpm --filter @outreachos/services type-check
+pnpm turbo run build --filter=@outreachos/web
+```
+
+Added regression tests covering:
+- `getAllSlugs()` returns `[]` when `DATABASE_URL` is missing
+- `listPublished()` returns `[]` when `DATABASE_URL` is missing
+- missing-table fallback still works
+- unexpected errors still throw
+
+### Files Modified
+- `packages/services/src/blog-service.ts` — added targeted public blog fallback for missing `DATABASE_URL`
+- `packages/services/src/blog-service.test.ts` — added regression coverage for missing-env and missing-table public blog behavior
+- `log.md` — this entry
+
+### Operational Note
+This code fix prevents the public blog static build from killing the deploy, but **production should still define `DATABASE_URL` in Vercel**. Without it, DB-backed runtime features will still be unavailable.
