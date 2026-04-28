@@ -2608,3 +2608,26 @@ Added regression tests covering:
 
 ### Operational Note
 This code fix prevents the public blog static build from killing the deploy, but **production should still define `DATABASE_URL` in Vercel**. Without it, DB-backed runtime features will still be unavailable.
+
+---
+
+## Bug Fix: Vercel Output Directory Path Doubling (2026-04-28)
+
+### Symptom
+Vercel build on `dev` (commit `b41df10`) succeeded — all 3 Turbo tasks completed, 68/68 static pages generated — but deployment failed with:
+```
+Error: The Next.js output directory "apps/web/.next" was not found at "/vercel/path0/apps/web/apps/web/.next"
+```
+
+### Root Cause
+Vercel Root Directory is set to `apps/web`. When the custom `buildCommand` (`pnpm turbo run build --filter=@outreachos/web`) runs via Turbo, Vercel's Turbo integration resolves the package path as `apps/web` relative to the monorepo root. It then looks for `.next` at `apps/web/.next` **relative to the Root Directory**, producing the doubled path `/vercel/path0/apps/web/apps/web/.next` instead of the correct `/vercel/path0/apps/web/.next`.
+
+### Fix
+Added `"outputDirectory": ".next"` to `apps/web/vercel.json`. This explicitly tells Vercel where the `.next` directory is relative to the Root Directory, overriding the broken auto-detection.
+
+### Files Modified
+- `apps/web/vercel.json` — added `outputDirectory: ".next"`
+- `log.md` — this entry
+
+### Branches
+- Applied to both `dev` (`53272ba`) and `main` (`c4584cd`) via cherry-pick.
